@@ -194,8 +194,6 @@ struct pmu {
 	int * __percpu			pmu_disable_count;
 	struct perf_cpu_context * __percpu pmu_cpu_context;
 	int				task_ctx_nr;
-	u32                             events_across_hotplug:1,
-					reserved:31;
 
 	/*
 	 * Fully disable/enable this PMU, can be used to protect from the PMI
@@ -697,10 +695,17 @@ static inline void perf_callchain_store(struct perf_callchain_entry *entry, u64 
 extern int sysctl_perf_event_paranoid;
 extern int sysctl_perf_event_mlock;
 extern int sysctl_perf_event_sample_rate;
+extern int sysctl_perf_cpu_time_max_percent;
+
+extern void perf_sample_event_took(u64 sample_len_ns);
 
 extern int perf_proc_update_handler(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp,
 		loff_t *ppos);
+extern int perf_cpu_time_max_percent_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos);
+
 
 static inline bool perf_paranoid_tracepoint_raw(void)
 {

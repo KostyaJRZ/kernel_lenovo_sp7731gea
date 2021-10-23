@@ -527,8 +527,6 @@ static int ehci_init(struct usb_hcd *hcd)
 	hw->hw_alt_next = QTD_NEXT(ehci, ehci->async->dummy->qtd_dma);
 
 	/* clear interrupt enables, set irq latency */
-	log2_irq_thresh = ehci->log2_irq_thresh;
-
 	if (log2_irq_thresh < 0 || log2_irq_thresh > 6)
 		log2_irq_thresh = 0;
 	temp = 1 << (16 + log2_irq_thresh);
@@ -593,11 +591,16 @@ static int ehci_run (struct usb_hcd *hcd)
 	 */
 	hcc_params = ehci_readl(ehci, &ehci->caps->hcc_params);
 	if (HCC_64BIT_ADDR(hcc_params)) {
-		ehci_writel(ehci, 0, &ehci->regs->segment);
-#if 0
-// this is deeply broken on almost all architectures
+#ifdef CONFIG_ARM64
+		ehci_writel(ehci, ehci->periodic_dma >> 32, &ehci->regs->segment);
+		/*
+		 * this is deeply broken on almost all architectures
+		 * but arm64 can use it so enable it
+		 */
 		if (!dma_set_mask(hcd->self.controller, DMA_BIT_MASK(64)))
 			ehci_info(ehci, "enabled 64bit DMA\n");
+#else
+		ehci_writel(ehci, 0, &ehci->regs->segment);
 #endif
 	}
 
@@ -788,12 +791,6 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 			pstatus = ehci_readl(ehci,
 					 &ehci->regs->port_status[i]);
 
-			/*set RS bit in case of remote wakeup*/
-			if (ehci_is_TDI(ehci) && !(cmd & CMD_RUN) &&
-					(pstatus & PORT_SUSPEND))
-				ehci_writel(ehci, cmd | CMD_RUN,
-						&ehci->regs->command);
-
 			if (pstatus & PORT_OWNER)
 				continue;
 			if (!(test_bit(i, &ehci->suspended_ports) &&
@@ -819,10 +816,6 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 	/* PCI errors [4.15.2.4] */
 	if (unlikely ((status & STS_FATAL) != 0)) {
 		ehci_err(ehci, "fatal error\n");
-		if (hcd->driver->dump_regs) {
-			hcd->driver->dump_regs(hcd);
-			panic("System error\n");
-		}
 		dbg_cmd(ehci, "fatal", cmd);
 		dbg_status(ehci, "fatal", status);
 dead:
@@ -984,8 +977,6 @@ rescan:
 	}
 
 	qh->exception = 1;
-	if (ehci->rh_state < EHCI_RH_RUNNING)
-		qh->qh_state = QH_STATE_IDLE;
 	switch (qh->qh_state) {
 	case QH_STATE_LINKED:
 	case QH_STATE_COMPLETING:
@@ -1303,11 +1294,6 @@ MODULE_LICENSE ("GPL");
 #ifdef CONFIG_MIPS_SEAD3
 #include "ehci-sead3.c"
 #define	PLATFORM_DRIVER		ehci_hcd_sead3_driver
-#endif
-
-#ifdef CONFIG_USB_EHCI_MSM_HSIC
-#include "ehci-msm-hsic.c"
-#define	PLATFORM_DRIVER		ehci_msm_hsic_driver
 #endif
 
 static int __init ehci_hcd_init(void)

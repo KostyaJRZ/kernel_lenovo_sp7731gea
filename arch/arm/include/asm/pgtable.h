@@ -24,6 +24,9 @@
 #include <asm/memory.h>
 #include <asm/pgtable-hwdef.h>
 
+
+#include <asm/tlbflush.h>
+
 #ifdef CONFIG_ARM_LPAE
 #include <asm/pgtable-3level.h>
 #else
@@ -97,7 +100,7 @@ extern pgprot_t		pgprot_s2_device;
 #define PAGE_HYP		_MOD_PROT(pgprot_kernel, L_PTE_HYP)
 #define PAGE_HYP_DEVICE		_MOD_PROT(pgprot_hyp_device, L_PTE_HYP)
 #define PAGE_S2			_MOD_PROT(pgprot_s2, L_PTE_S2_RDONLY)
-#define PAGE_S2_DEVICE		_MOD_PROT(pgprot_s2_device, L_PTE_USER | L_PTE_S2_RDONLY)
+#define PAGE_S2_DEVICE		_MOD_PROT(pgprot_s2_device, L_PTE_S2_RDWR)
 
 #define __PAGE_NONE		__pgprot(_L_PTE_DEFAULT | L_PTE_RDONLY | L_PTE_XN | L_PTE_NONE)
 #define __PAGE_SHARED		__pgprot(_L_PTE_DEFAULT | L_PTE_USER | L_PTE_XN)
@@ -116,33 +119,22 @@ extern pgprot_t		pgprot_s2_device;
 #define pgprot_writecombine(prot) \
 	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_BUFFERABLE)
 
+#define pgprot_cached(prot) \
+	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_DEV_CACHED)
+
 #define pgprot_stronglyordered(prot) \
-	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_UNCACHED | L_PTE_XN)
-
-#define pgprot_device(prot) \
-	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_DEV_NONSHARED)
-
-#define pgprot_writethroughcache(prot) \
-	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_WRITETHROUGH)
-
-#define pgprot_writebackcache(prot) \
-	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_WRITEBACK)
-
-#define pgprot_writebackwacache(prot) \
-	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_WRITEALLOC)
+	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_UNCACHED)
 
 #ifdef CONFIG_ARM_DMA_MEM_BUFFERABLE
 #define pgprot_dmacoherent(prot) \
 	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_BUFFERABLE | L_PTE_XN)
 #define __HAVE_PHYS_MEM_ACCESS_PROT
-#define COHERENT_IS_NORMAL 1
 struct file;
 extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
 				     unsigned long size, pgprot_t vma_prot);
 #else
 #define pgprot_dmacoherent(prot) \
 	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_UNCACHED | L_PTE_XN)
-#define COHERENT_IS_NORMAL 0
 #endif
 
 #endif /* __ASSEMBLY__ */
@@ -265,8 +257,6 @@ PTE_BIT_FUNC(mkclean,   &= ~L_PTE_DIRTY);
 PTE_BIT_FUNC(mkdirty,   |= L_PTE_DIRTY);
 PTE_BIT_FUNC(mkold,     &= ~L_PTE_YOUNG);
 PTE_BIT_FUNC(mkyoung,   |= L_PTE_YOUNG);
-PTE_BIT_FUNC(mkexec,   &= ~L_PTE_XN);
-PTE_BIT_FUNC(mknexec,   |= L_PTE_XN);
 
 static inline pte_t pte_mkspecial(pte_t pte) { return pte; }
 
@@ -339,7 +329,7 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
  * into virtual address `from'
  */
 #define io_remap_pfn_range(vma,from,pfn,size,prot) \
-	remap_pfn_range(vma,from,pfn,size,prot)
+		remap_pfn_range(vma, from, pfn, size, prot)
 
 #define pgtable_cache_init() do { } while (0)
 

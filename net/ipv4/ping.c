@@ -214,6 +214,8 @@ static struct sock *ping_lookup(struct net *net, struct sk_buff *skb, u16 ident)
 					     &ipv6_hdr(skb)->daddr))
 				continue;
 #endif
+		} else {
+			continue;
 		}
 
 		if (sk->sk_bound_dev_if && sk->sk_bound_dev_if != dif)
@@ -768,7 +770,8 @@ int ping_v4_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 
 	flowi4_init_output(&fl4, ipc.oif, sk->sk_mark, tos,
 			   RT_SCOPE_UNIVERSE, sk->sk_protocol,
-			   inet_sk_flowi_flags(sk), faddr, saddr, 0, 0);
+			   inet_sk_flowi_flags(sk), faddr, saddr, 0, 0,
+			   sock_i_uid(sk));
 
 	security_sk_classify_flow(sk, flowi4_to_flowi(&fl4));
 	rt = ip_route_output_flow(net, &fl4, sk);
@@ -834,8 +837,8 @@ int ping_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 {
 	struct inet_sock *isk = inet_sk(sk);
 	int family = sk->sk_family;
-	struct sockaddr_in *sin;
-	struct sockaddr_in6 *sin6;
+        struct sockaddr_in *sin;
+        struct sockaddr_in6 *sin6;
 	struct sk_buff *skb;
 	int copied, err;
 
@@ -845,20 +848,19 @@ int ping_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	if (flags & MSG_OOB)
 		goto out;
 
-	if (addr_len) {
-		if (family == AF_INET)
-			*addr_len = sizeof(*sin);
-		else if (family == AF_INET6 && addr_len)
-			*addr_len = sizeof(*sin6);
-	}
+        if (addr_len) {
+                if (family == AF_INET)
+                        *addr_len = sizeof(*sin);
+                else if (family == AF_INET6 && addr_len)
+                        *addr_len = sizeof(*sin6);
+        }
 
 	if (flags & MSG_ERRQUEUE) {
 		if (family == AF_INET) {
 			return ip_recv_error(sk, msg, len, addr_len);
 #if IS_ENABLED(CONFIG_IPV6)
 		} else if (family == AF_INET6) {
-			return pingv6_ops.ipv6_recv_error(sk, msg, len,
-							  addr_len);
+			return pingv6_ops.ipv6_recv_error(sk, msg, len);
 #endif
 		}
 	}
@@ -898,17 +900,17 @@ int ping_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 		struct ipv6_pinfo *np = inet6_sk(sk);
 		struct ipv6hdr *ip6 = ipv6_hdr(skb);
 		sin6 = (struct sockaddr_in6 *) msg->msg_name;
+
 		if (sin6) {
 			sin6->sin6_family = AF_INET6;
 			sin6->sin6_port = 0;
 			sin6->sin6_addr = ip6->saddr;
-
 			sin6->sin6_flowinfo = 0;
 			if (np->sndflow)
 				sin6->sin6_flowinfo = ip6_flowinfo(ip6);
-
-			sin6->sin6_scope_id = ipv6_iface_scope_id(&sin6->sin6_addr,
-							  IP6CB(skb)->iif);
+			sin6->sin6_scope_id =
+				ipv6_iface_scope_id(&sin6->sin6_addr,
+						    IP6CB(skb)->iif);
 		}
 
 		if (inet6_sk(sk)->rxopt.all)

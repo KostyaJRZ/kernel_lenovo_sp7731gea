@@ -28,8 +28,11 @@
 #include <linux/sched.h>
 #include <linux/async.h>
 #include <linux/suspend.h>
+#include <trace/events/power.h>
+#include <linux/cpufreq.h>
 #include <linux/cpuidle.h>
 #include <linux/timer.h>
+#include <linux/wakeup_reason.h>
 
 #include "../base.h"
 #include "power.h"
@@ -484,6 +487,9 @@ static int device_resume_noirq(struct device *dev, pm_message_t state)
 	}
 
 	error = dpm_run_callback(callback, dev, state, info);
+	if(callback){
+		printk("-------- resume %s  %pf with %d\n", dev->kobj.name, callback, error);
+	}
 
  Out:
 	TRACE_RESUME(error);
@@ -566,6 +572,9 @@ static int device_resume_early(struct device *dev, pm_message_t state)
 	}
 
 	error = dpm_run_callback(callback, dev, state, info);
+	if(callback){
+		printk("-------- resume %s %pf with %d\n", dev->kobj.name, callback, error);
+	}
 
  Out:
 	TRACE_RESUME(error);
@@ -693,6 +702,9 @@ static int device_resume(struct device *dev, pm_message_t state, bool async)
  End:
 	error = dpm_run_callback(callback, dev, state, info);
 	dev->power.is_suspended = false;
+	if(callback){
+		printk("-------- resume %s %pf with %d\n", dev->kobj.name, callback, error);
+	}
 
  Unlock:
 	device_unlock(dev);
@@ -774,6 +786,8 @@ void dpm_resume(pm_message_t state)
 	mutex_unlock(&dpm_list_mtx);
 	async_synchronize_full();
 	dpm_show_time(starttime, state, NULL);
+
+	cpufreq_resume();
 }
 
 /**
@@ -902,6 +916,7 @@ static int device_suspend_noirq(struct device *dev, pm_message_t state)
 {
 	pm_callback_t callback = NULL;
 	char *info = NULL;
+	int error = 0;
 
 	if (dev->power.syscore)
 		return 0;
@@ -924,8 +939,12 @@ static int device_suspend_noirq(struct device *dev, pm_message_t state)
 		info = "noirq driver ";
 		callback = pm_noirq_op(dev->driver->pm, state);
 	}
+	error = dpm_run_callback(callback, dev, state, info);
+	if(callback){
+		printk("-------- suspend %s %pf with %d\n", dev->kobj.name, callback, error);
+	}
 
-	return dpm_run_callback(callback, dev, state, info);
+	return error;
 }
 
 /**
@@ -938,6 +957,7 @@ static int device_suspend_noirq(struct device *dev, pm_message_t state)
 static int dpm_suspend_noirq(pm_message_t state)
 {
 	ktime_t starttime = ktime_get();
+	char suspend_abort[MAX_SUSPEND_ABORT_LEN];
 	int error = 0;
 
 	cpuidle_pause();
@@ -965,6 +985,9 @@ static int dpm_suspend_noirq(pm_message_t state)
 		put_device(dev);
 
 		if (pm_wakeup_pending()) {
+			pm_get_active_wakeup_sources(suspend_abort,
+				MAX_SUSPEND_ABORT_LEN);
+			log_suspend_abort_reason(suspend_abort);
 			error = -EBUSY;
 			break;
 		}
@@ -988,6 +1011,7 @@ static int device_suspend_late(struct device *dev, pm_message_t state)
 {
 	pm_callback_t callback = NULL;
 	char *info = NULL;
+	int error = 0;
 
 	__pm_runtime_disable(dev, false);
 
@@ -1012,8 +1036,12 @@ static int device_suspend_late(struct device *dev, pm_message_t state)
 		info = "late driver ";
 		callback = pm_late_early_op(dev->driver->pm, state);
 	}
+	error = dpm_run_callback(callback, dev, state, info);
+	if(callback){
+		printk("-------- suspend %s %pf with %d\n", dev->kobj.name, callback, error);
+	}
 
-	return dpm_run_callback(callback, dev, state, info);
+	return error;
 }
 
 /**
@@ -1023,6 +1051,7 @@ static int device_suspend_late(struct device *dev, pm_message_t state)
 static int dpm_suspend_late(pm_message_t state)
 {
 	ktime_t starttime = ktime_get();
+	char suspend_abort[MAX_SUSPEND_ABORT_LEN];
 	int error = 0;
 
 	mutex_lock(&dpm_list_mtx);
@@ -1048,6 +1077,9 @@ static int dpm_suspend_late(pm_message_t state)
 		put_device(dev);
 
 		if (pm_wakeup_pending()) {
+			pm_get_active_wakeup_sources(suspend_abort,
+				MAX_SUSPEND_ABORT_LEN);
+			log_suspend_abort_reason(suspend_abort);
 			error = -EBUSY;
 			break;
 		}
@@ -1115,6 +1147,7 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 	char *info = NULL;
 	int error = 0;
 	struct dpm_watchdog wd;
+	char suspend_abort[MAX_SUSPEND_ABORT_LEN];
 
 	dpm_wait_for_children(dev, async);
 
@@ -1131,6 +1164,9 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 		pm_wakeup_event(dev, 0);
 
 	if (pm_wakeup_pending()) {
+		pm_get_active_wakeup_sources(suspend_abort,
+			MAX_SUSPEND_ABORT_LEN);
+		log_suspend_abort_reason(suspend_abort);
 		async_error = -EBUSY;
 		goto Complete;
 	}
@@ -1184,6 +1220,9 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 	}
 
 	error = dpm_run_callback(callback, dev, state, info);
+	if(callback){
+		printk("-------- suspend %s %pf with %d\n", dev->kobj.name, callback, error);
+	}
 
  End:
 	if (!error) {
@@ -1243,6 +1282,8 @@ int dpm_suspend(pm_message_t state)
 
 	might_sleep();
 
+	cpufreq_suspend();
+
 	mutex_lock(&dpm_list_mtx);
 	pm_transition = state;
 	async_error = 0;
@@ -1251,7 +1292,6 @@ int dpm_suspend(pm_message_t state)
 
 		get_device(dev);
 		mutex_unlock(&dpm_list_mtx);
-
 		error = device_suspend(dev);
 
 		mutex_lock(&dpm_list_mtx);

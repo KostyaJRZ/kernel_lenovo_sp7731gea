@@ -14,7 +14,6 @@
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/vmalloc.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/user.h>
@@ -41,7 +40,6 @@
 #include <asm/thread_notify.h>
 #include <asm/stacktrace.h>
 #include <asm/mach/time.h>
-#include <asm/tls.h>
 
 #ifdef CONFIG_CC_STACKPROTECTOR
 #include <linux/stackprotector.h>
@@ -169,8 +167,7 @@ EXPORT_SYMBOL_GPL(arm_pm_restart);
  * This is our default idle handler.
  */
 
-extern void arch_idle(void);
-void (*arm_pm_idle)(void) = arch_idle;
+void (*arm_pm_idle)(void);
 
 static void default_idle(void)
 {
@@ -258,7 +255,6 @@ void machine_shutdown(void)
  */
 void machine_halt(void)
 {
-	preempt_disable();
 	smp_send_stop();
 
 	local_irq_disable();
@@ -273,7 +269,6 @@ void machine_halt(void)
  */
 void machine_power_off(void)
 {
-	preempt_disable();
 	smp_send_stop();
 
 	if (pm_power_off)
@@ -293,7 +288,6 @@ void machine_power_off(void)
  */
 void machine_restart(char *cmd)
 {
-	preempt_disable();
 	smp_send_stop();
 
 	/* Flush the console to make sure all the relevant messages make it
@@ -346,12 +340,7 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 		printk("%04lx ", (unsigned long)p & 0xffff);
 		for (j = 0; j < 8; j++) {
 			u32	data;
-			/*
-			 * vmalloc addresses may point to
-			 * memory-mapped peripherals
-			 */
-			if (is_vmalloc_addr(p) ||
-			    probe_kernel_address(p, data)) {
+			if (probe_kernel_address(p, data)) {
 				printk(" ********");
 			} else {
 				printk(" %08x", data);
@@ -512,8 +501,7 @@ copy_thread(unsigned long clone_flags, unsigned long stack_start,
 	clear_ptrace_hw_breakpoint(p);
 
 	if (clone_flags & CLONE_SETTLS)
-		thread->tp_value[0] = childregs->ARM_r3;
-	thread->tp_value[1] = get_tpuser();
+		thread->tp_value = childregs->ARM_r3;
 
 	thread_notify(THREAD_NOTIFY_COPY, thread);
 
@@ -615,14 +603,9 @@ int in_gate_area_no_mm(unsigned long addr)
 
 const char *arch_vma_name(struct vm_area_struct *vma)
 {
-	if (is_gate_vma(vma))
-		return "[vectors]";
-	else if (vma->vm_mm && vma->vm_start == vma->vm_mm->context.sigpage)
-		return "[sigpage]";
-	else if (vma == get_user_timers_vma(NULL))
-		return "[timers]";
-	else
-		return NULL;
+	return is_gate_vma(vma) ? "[vectors]" :
+		(vma->vm_mm && vma->vm_start == vma->vm_mm->context.sigpage) ?
+		 "[sigpage]" : NULL;
 }
 
 static struct page *signal_page;

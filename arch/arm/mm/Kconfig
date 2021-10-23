@@ -778,6 +778,7 @@ config NEED_KUSER_HELPERS
 
 config KUSER_HELPERS
 	bool "Enable kuser helpers in vector page" if !NEED_KUSER_HELPERS
+	depends on MMU
 	default y
 	help
 	  Warning: disabling this option may break user programs.
@@ -932,14 +933,8 @@ config ARCH_HAS_BARRIERS
 	  This option allows the use of custom mandatory barriers
 	  included via the mach/barriers.h file.
 
-config STRICT_MEMORY_RWX
-	bool "restrict kernel memory permissions as much as possible"
-	default n
+config ARCH_SUPPORTS_BIG_ENDIAN
+	bool
 	help
-	  If this is set, kernel text will be made RX, kernel data and stack
-	  RW, rodata R (otherwise all of the kernel 1-to-1 mapping is
-	  made RWX).
-	  The tradeoff is that several sections are padded to
-	  1M boundaries (because their permissions are different and
-	  splitting the 1M pages into 4K ones causes TLB performance
-	  problems), wasting memory.
+	  This option specifies the architecture can support big endian
+	  operation.

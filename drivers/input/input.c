@@ -29,6 +29,10 @@
 #include <linux/rcupdate.h>
 #include "input-compat.h"
 
+#if defined(CONFIG_SPRD_DEBUG)
+#include <soc/sprd/sprd_debug.h>
+#endif
+
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@suse.cz>");
 MODULE_DESCRIPTION("Input core");
 MODULE_LICENSE("GPL");
@@ -257,9 +261,10 @@ static int input_handle_abs_event(struct input_dev *dev,
 }
 
 static int input_get_disposition(struct input_dev *dev,
-			  unsigned int type, unsigned int code, int value)
+			  unsigned int type, unsigned int code, int *pval)
 {
 	int disposition = INPUT_IGNORE_EVENT;
+	int value = *pval;
 
 	switch (type) {
 
@@ -290,8 +295,22 @@ static int input_get_disposition(struct input_dev *dev,
 			if (!!test_bit(code, dev->key) != !!value) {
 
 				__change_bit(code, dev->key);
+
+				#if defined(CONFIG_SPRD_DEBUG)
+					if(code != BTN_TOUCH) {
+						sprd_debug_check_crash_key(code,value);
+					}
+				#endif
+
 				disposition = INPUT_PASS_TO_HANDLERS;
 			}
+		}
+		else {
+			#if defined(CONFIG_SPRD_DEBUG)
+				if(code != BTN_TOUCH && value == 0) {
+					sprd_debug_check_crash_key(code,value);
+				}
+			#endif
 		}
 		break;
 
@@ -357,6 +376,7 @@ static int input_get_disposition(struct input_dev *dev,
 		break;
 	}
 
+	*pval = value;
 	return disposition;
 }
 
@@ -365,7 +385,7 @@ static void input_handle_event(struct input_dev *dev,
 {
 	int disposition;
 
-	disposition = input_get_disposition(dev, type, code, value);
+	disposition = input_get_disposition(dev, type, code, &value);
 
 	if ((disposition & INPUT_PASS_TO_DEVICE) && dev->event)
 		dev->event(dev, type, code, value);
@@ -1662,11 +1682,9 @@ void input_reset_device(struct input_dev *dev)
 		 * Keys that have been pressed at suspend time are unlikely
 		 * to be still pressed when we resume.
 		 */
-		if (!test_bit(INPUT_PROP_NO_DUMMY_RELEASE, dev->propbit)) {
-			spin_lock_irq(&dev->event_lock);
-			input_dev_release_keys(dev);
-			spin_unlock_irq(&dev->event_lock);
-		}
+		spin_lock_irq(&dev->event_lock);
+		input_dev_release_keys(dev);
+		spin_unlock_irq(&dev->event_lock);
 	}
 
 	mutex_unlock(&dev->mutex);

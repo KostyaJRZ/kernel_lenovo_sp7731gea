@@ -300,13 +300,6 @@ EXPORT_SYMBOL(sysctl_tcp_wmem);
 atomic_long_t tcp_memory_allocated;	/* Current allocated memory. */
 EXPORT_SYMBOL(tcp_memory_allocated);
 
-int sysctl_tcp_delack_seg __read_mostly = TCP_DELACK_SEG;
-EXPORT_SYMBOL(sysctl_tcp_delack_seg);
-
-int sysctl_tcp_use_userconfig __read_mostly;
-EXPORT_SYMBOL(sysctl_tcp_use_userconfig);
-
-
 /*
  * Current number of TCP sockets.
  */
@@ -1076,7 +1069,7 @@ int tcp_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 	if (unlikely(tp->repair)) {
 		if (tp->repair_queue == TCP_RECV_QUEUE) {
 			copied = tcp_send_rcvq(sk, msg, size);
-			goto out;
+			goto out_nopush;
 		}
 
 		err = -EINVAL;
@@ -1249,6 +1242,7 @@ wait_for_memory:
 out:
 	if (copied)
 		tcp_push(sk, flags, mss_now, tp->nonagle);
+out_nopush:
 	release_sock(sk);
 
 	if (copied + copied_syn)
@@ -1364,11 +1358,8 @@ void tcp_cleanup_rbuf(struct sock *sk, int copied)
 		   /* Delayed ACKs frequently hit locked sockets during bulk
 		    * receive. */
 		if (icsk->icsk_ack.blocked ||
-		    /* Once-per-sysctl_tcp_delack_seg segments
-			  * ACK was not sent by tcp_input.c
-			  */
-		    tp->rcv_nxt - tp->rcv_wup > (icsk->icsk_ack.rcv_mss) *
-						sysctl_tcp_delack_seg ||
+		    /* Once-per-two-segments ACK was not sent by tcp_input.c */
+		    tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss ||
 		    /*
 		     * If this read emptied read buffer, we send ACK, if
 		     * connection is not bidirectional, user drained
@@ -2767,12 +2758,6 @@ void tcp_get_info(const struct sock *sk, struct tcp_info *info)
 	info->tcpi_rcv_space = tp->rcvq_space.space;
 
 	info->tcpi_total_retrans = tp->total_retrans;
-
-	if (sk->sk_socket) {
-		struct file *filep = sk->sk_socket->file;
-		if (filep)
-			info->tcpi_count = atomic_read(&filep->f_count);
-	}
 }
 EXPORT_SYMBOL_GPL(tcp_get_info);
 
@@ -3506,7 +3491,7 @@ static int tcp_is_local(struct net *net, __be32 addr) {
 	return rt->dst.dev && (rt->dst.dev->flags & IFF_LOOPBACK);
 }
 
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if defined(CONFIG_IPV6)
 static int tcp_is_local6(struct net *net, struct in6_addr *addr) {
 	struct rt6_info *rt6 = rt6_lookup(net, addr, addr, 0, 0);
 	return rt6 && rt6->dst.dev && (rt6->dst.dev->flags & IFF_LOOPBACK);
@@ -3523,9 +3508,9 @@ int tcp_nuke_addr(struct net *net, struct sockaddr *addr)
 	int family = addr->sa_family;
 	unsigned int bucket;
 
-	struct in_addr *in = NULL;
+	struct in_addr *in;
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
-	struct in6_addr *in6 = NULL;
+	struct in6_addr *in6;
 #endif
 	if (family == AF_INET) {
 		in = &((struct sockaddr_in *)addr)->sin_addr;
@@ -3563,7 +3548,7 @@ restart:
 					continue;
 			}
 
-#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+#if defined(CONFIG_IPV6)
 			if (family == AF_INET6) {
 				struct in6_addr *s6;
 				if (!inet->pinet6)
@@ -3600,3 +3585,4 @@ restart:
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(tcp_nuke_addr);

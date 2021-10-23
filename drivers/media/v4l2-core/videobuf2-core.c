@@ -590,13 +590,6 @@ static int __reqbufs(struct vb2_queue *q, struct v4l2_requestbuffers *req)
 		return -EBUSY;
 	}
 
-	/*
-	 * If the same number of buffers and memory access method is requested
-	 * then return immediately.
-	 */
-	if (q->memory == req->memory && req->count == q->num_buffers)
-		return 0;
-
 	if (req->count == 0 || q->num_buffers != 0 || q->memory != req->memory) {
 		/*
 		 * We already have buffers allocated, so first check if they
@@ -673,6 +666,7 @@ static int __reqbufs(struct vb2_queue *q, struct v4l2_requestbuffers *req)
 	 * to the userspace.
 	 */
 	req->count = allocated_buffers;
+	q->waiting_for_buffers = !V4L2_TYPE_IS_OUTPUT(q->type);
 
 	return 0;
 }
@@ -721,6 +715,7 @@ static int __create_bufs(struct vb2_queue *q, struct v4l2_create_buffers *create
 		memset(q->plane_sizes, 0, sizeof(q->plane_sizes));
 		memset(q->alloc_ctx, 0, sizeof(q->alloc_ctx));
 		q->memory = create->memory;
+		q->waiting_for_buffers = !V4L2_TYPE_IS_OUTPUT(q->type);
 	}
 
 	num_buffers = min(create->count, VIDEO_MAX_FRAME - q->num_buffers);
@@ -1303,13 +1298,9 @@ int vb2_qbuf(struct vb2_queue *q, struct v4l2_buffer *b)
 	 * consistent after getting driver's lock back.
 	 */
 	if (q->memory == V4L2_MEMORY_USERPTR) {
-		bool mm_exists = !!current->mm;
-
-		mmap_sem = mm_exists ? &current->mm->mmap_sem : NULL;
+		mmap_sem = &current->mm->mmap_sem;
 		call_qop(q, wait_prepare, q);
-		/* kthreads have no userspace, hence no pages to lock */
-		if (mmap_sem)
-			down_read(mmap_sem);
+		down_read(mmap_sem);
 		call_qop(q, wait_finish, q);
 	}
 
@@ -1366,6 +1357,7 @@ int vb2_qbuf(struct vb2_queue *q, struct v4l2_buffer *b)
 	 * dequeued in dqbuf.
 	 */
 	list_add_tail(&vb->queued_entry, &q->queued_list);
+	q->waiting_for_buffers = false;
 	vb->state = VB2_BUF_STATE_QUEUED;
 
 	/*
@@ -1567,11 +1559,9 @@ int vb2_dqbuf(struct vb2_queue *q, struct v4l2_buffer *b, bool nonblocking)
 		dprintk(1, "dqbuf: invalid buffer type\n");
 		return -EINVAL;
 	}
-
 	ret = __vb2_get_done_vb(q, &vb, b, nonblocking);
-	if (ret < 0) {
+	if (ret < 0)
 		return ret;
-	}
 
 	ret = call_qop(q, buf_finish, vb);
 	if (ret) {
@@ -1693,6 +1683,7 @@ int vb2_streamon(struct vb2_queue *q, enum v4l2_buf_type type)
 	}
 
 	q->streaming = 1;
+
 	dprintk(3, "Streamon successful\n");
 	return 0;
 }
@@ -1736,6 +1727,7 @@ int vb2_streamoff(struct vb2_queue *q, enum v4l2_buf_type type)
 	 * and videobuf, effectively returning control over them to userspace.
 	 */
 	__vb2_queue_cancel(q);
+	q->waiting_for_buffers = !V4L2_TYPE_IS_OUTPUT(q->type);
 
 	dprintk(3, "Streamoff successful\n");
 	return 0;
@@ -2021,9 +2013,16 @@ unsigned int vb2_poll(struct vb2_queue *q, struct file *file, poll_table *wait)
 	}
 
 	/*
-	 * There is nothing to wait for if no buffers have already been queued.
+	 * There is nothing to wait for if the queue isn't streaming.
 	 */
-	if (list_empty(&q->queued_list))
+	if (!vb2_is_streaming(q))
+		return res | POLLERR;
+	/*
+	 * For compatibility with vb1: if QBUF hasn't been called yet, then
+	 * return POLLERR as well. This only affects capture queues, output
+	 * queues will always initialize waiting_for_buffers to false.
+	 */
+	if (q->waiting_for_buffers)
 		return res | POLLERR;
 
 	if (list_empty(&q->done_list))

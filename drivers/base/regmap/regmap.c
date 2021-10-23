@@ -114,7 +114,7 @@ bool regmap_readable(struct regmap *map, unsigned int reg)
 
 bool regmap_volatile(struct regmap *map, unsigned int reg)
 {
-	if (!regmap_readable(map, reg))
+	if (!map->format.format_write && !regmap_readable(map, reg))
 		return false;
 
 	if (map->volatile_reg)
@@ -381,6 +381,28 @@ static void regmap_range_exit(struct regmap *map)
 	kfree(map->selector_work_buf);
 }
 
+int regmap_attach_dev(struct device *dev, struct regmap *map,
+		      const struct regmap_config *config)
+{
+	struct regmap **m;
+
+	map->dev = dev;
+
+	regmap_debugfs_init(map, config->name);
+
+	/* Add a devres resource for dev_get_regmap() */
+	m = devres_alloc(dev_get_regmap_release, sizeof(*m), GFP_KERNEL);
+	if (!m) {
+		regmap_debugfs_exit(map);
+		return -ENOMEM;
+	}
+	*m = map;
+	devres_add(dev, m);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(regmap_attach_dev);
+
 /**
  * regmap_init(): Initialise register map
  *
@@ -398,7 +420,7 @@ struct regmap *regmap_init(struct device *dev,
 			   void *bus_context,
 			   const struct regmap_config *config)
 {
-	struct regmap *map, **m;
+	struct regmap *map;
 	int ret = -EINVAL;
 	enum regmap_endian reg_endian, val_endian;
 	int i, j;
@@ -730,25 +752,19 @@ skip_format_initialization:
 		}
 	}
 
-	regmap_debugfs_init(map, config->name);
-
 	ret = regcache_init(map, config);
 	if (ret != 0)
 		goto err_range;
 
-	/* Add a devres resource for dev_get_regmap() */
-	m = devres_alloc(dev_get_regmap_release, sizeof(*m), GFP_KERNEL);
-	if (!m) {
-		ret = -ENOMEM;
-		goto err_debugfs;
+	if (dev) {
+		ret = regmap_attach_dev(dev, map, config);
+		if (ret != 0)
+			goto err_regcache;
 	}
-	*m = map;
-	devres_add(dev, m);
 
 	return map;
 
-err_debugfs:
-	regmap_debugfs_exit(map);
+err_regcache:
 	regcache_exit(map);
 err_range:
 	regmap_range_exit(map);
@@ -1177,7 +1193,7 @@ int _regmap_write(struct regmap *map, unsigned int reg,
 	}
 
 #ifdef LOG_DEVICE
-	if (strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
+	if (map->dev && strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
 		dev_info(map->dev, "%x <= %x\n", reg, val);
 #endif
 
@@ -1437,7 +1453,7 @@ static int _regmap_read(struct regmap *map, unsigned int reg,
 	ret = map->reg_read(context, reg, val);
 	if (ret == 0) {
 #ifdef LOG_DEVICE
-		if (strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
+		if (map->dev && strcmp(dev_name(map->dev), LOG_DEVICE) == 0)
 			dev_info(map->dev, "%x => %x\n", reg, *val);
 #endif
 

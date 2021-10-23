@@ -25,15 +25,13 @@
 #include <asm/system_misc.h>
 #include <asm/system_info.h>
 #include <asm/tlbflush.h>
-#if defined(CONFIG_ARCH_MSM_SCORPION) && !defined(CONFIG_MSM_SMP)
-#include <asm/io.h>
-#include <mach/msm_iomap.h>
+
+#if defined(CONFIG_SPRD_DEBUG)
+/* For saving Fault status */
+#include <soc/sprd/sprd_debug.h>
 #endif
 
 #include "fault.h"
-
-#define CREATE_TRACE_POINTS
-#include <trace/events/exception.h>
 
 #ifdef CONFIG_MMU
 
@@ -144,6 +142,10 @@ __do_kernel_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 	 */
 	if (fixup_exception(regs))
 		return;
+#if defined(CONFIG_SPRD_DEBUG)
+	/* For saving Fault status */
+	sprd_debug_save_pte((void *)regs, (int)current);
+#endif
 
 	/*
 	 * No handler, we'll have to terminate things with extreme prejudice.
@@ -170,8 +172,10 @@ __do_user_fault(struct task_struct *tsk, unsigned long addr,
 		struct pt_regs *regs)
 {
 	struct siginfo si;
-
-	trace_user_fault(tsk, addr, fsr);
+#if defined(CONFIG_SPRD_DEBUG)
+	/* For saving Fault status */
+	sprd_debug_save_pte((void *)regs, (int)current);
+#endif
 
 #ifdef CONFIG_DEBUG_USER
 	if (((user_debug & UDBG_SEGV) && (sig == SIGSEGV)) ||
@@ -270,9 +274,7 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	struct task_struct *tsk;
 	struct mm_struct *mm;
 	int fault, sig, code;
-	int write = fsr & FSR_WRITE;
-	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
-				(write ? FAULT_FLAG_WRITE : 0);
+	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE;
 
 	if (notify_page_fault(regs, fsr))
 		return 0;
@@ -290,6 +292,11 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	 */
 	if (in_atomic() || irqs_disabled() || !mm)
 		goto no_context;
+
+	if (user_mode(regs))
+		flags |= FAULT_FLAG_USER;
+	if (fsr & FSR_WRITE)
+		flags |= FAULT_FLAG_WRITE;
 
 	/*
 	 * As per x86, we may deadlock here.  However, since the kernel only
@@ -358,6 +365,13 @@ retry:
 	if (likely(!(fault & (VM_FAULT_ERROR | VM_FAULT_BADMAP | VM_FAULT_BADACCESS))))
 		return 0;
 
+	/*
+	 * If we are in kernel mode at this point, we
+	 * have no context to handle this fault with.
+	 */
+	if (!user_mode(regs))
+		goto no_context;
+
 	if (fault & VM_FAULT_OOM) {
 		/*
 		 * We ran out of memory, call the OOM killer, and return to
@@ -367,13 +381,6 @@ retry:
 		pagefault_out_of_memory();
 		return 0;
 	}
-
-	/*
-	 * If we are in kernel mode at this point, we
-	 * have no context to handle this fault with.
-	 */
-	if (!user_mode(regs))
-		goto no_context;
 
 	if (fault & VM_FAULT_SIGBUS) {
 		/*
@@ -455,8 +462,16 @@ do_translation_fault(unsigned long addr, unsigned int fsr,
 
 	if (pud_none(*pud_k))
 		goto bad_area;
-	if (!pud_present(*pud))
+	if (!pud_present(*pud)) {
 		set_pud(pud, *pud_k);
+		/*
+		 * There is a small window during free_pgtables() where the
+		 * user *pud entry is 0 but the TLB has not been invalidated
+		 * and we get a level 2 (pmd) translation fault caused by the
+		 * intermediate TLB caching of the old level 1 (pud) entry.
+		 */
+		flush_tlb_kernel_page(addr);
+	}
 
 	pmd = pmd_offset(pud, addr);
 	pmd_k = pmd_offset(pud_k, addr);
@@ -479,8 +494,9 @@ do_translation_fault(unsigned long addr, unsigned int fsr,
 #endif
 	if (pmd_none(pmd_k[index]))
 		goto bad_area;
+	if (!pmd_present(pmd[index]))
+		copy_pmd(pmd, pmd_k);
 
-	copy_pmd(pmd, pmd_k);
 	return 0;
 
 bad_area:
@@ -513,49 +529,6 @@ do_sect_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 static int
 do_bad(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 {
-	return 1;
-}
-
-#if defined(CONFIG_ARCH_MSM_SCORPION) && !defined(CONFIG_MSM_SMP)
-#define __str(x) #x
-#define MRC(x, v1, v2, v4, v5, v6) do {					\
-	unsigned int __##x;						\
-	asm("mrc " __str(v1) ", " __str(v2) ", %0, " __str(v4) ", "	\
-		__str(v5) ", " __str(v6) "\n" \
-		: "=r" (__##x));					\
-	pr_info("%s: %s = 0x%.8x\n", __func__, #x, __##x);		\
-} while(0)
-
-#define MSM_TCSR_SPARE2 (MSM_TCSR_BASE + 0x60)
-
-#endif
-
-int
-do_imprecise_ext(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
-{
-#if defined(CONFIG_ARCH_MSM_SCORPION) && !defined(CONFIG_MSM_SMP)
-	MRC(ADFSR,    p15, 0,  c5, c1, 0);
-	MRC(DFSR,     p15, 0,  c5, c0, 0);
-	MRC(ACTLR,    p15, 0,  c1, c0, 1);
-	MRC(EFSR,     p15, 7, c15, c0, 1);
-	MRC(L2SR,     p15, 3, c15, c1, 0);
-	MRC(L2CR0,    p15, 3, c15, c0, 1);
-	MRC(L2CPUESR, p15, 3, c15, c1, 1);
-	MRC(L2CPUCR,  p15, 3, c15, c0, 2);
-	MRC(SPESR,    p15, 1,  c9, c7, 0);
-	MRC(SPCR,     p15, 0,  c9, c7, 0);
-	MRC(DMACHSR,  p15, 1, c11, c0, 0);
-	MRC(DMACHESR, p15, 1, c11, c0, 1);
-	MRC(DMACHCR,  p15, 0, c11, c0, 2);
-
-	/* clear out EFSR and ADFSR after fault */
-	asm volatile ("mcr p15, 7, %0, c15, c0, 1\n\t"
-		      "mcr p15, 0, %0, c5, c1, 0"
-		      : : "r" (0));
-#endif
-#if defined(CONFIG_ARCH_MSM_SCORPION) && !defined(CONFIG_MSM_SMP)
-	pr_info("%s: TCSR_SPARE2 = 0x%.8x\n", __func__, readl(MSM_TCSR_SPARE2));
-#endif
 	return 1;
 }
 
@@ -598,8 +571,6 @@ do_DataAbort(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 	if (!inf->fn(addr, fsr & ~FSR_LNX_PF, regs))
 		return;
 
-	trace_unhandled_abort(regs, addr, fsr);
-
 	printk(KERN_ALERT "Unhandled fault: %s (0x%03x) at 0x%08lx\n",
 		inf->name, fsr, addr);
 
@@ -631,8 +602,6 @@ do_PrefetchAbort(unsigned long addr, unsigned int ifsr, struct pt_regs *regs)
 
 	if (!inf->fn(addr, ifsr | FSR_LNX_PF, regs))
 		return;
-
-	trace_unhandled_abort(regs, addr, ifsr);
 
 	printk(KERN_ALERT "Unhandled prefetch abort: %s (0x%03x) at 0x%08lx\n",
 		inf->name, ifsr, addr);

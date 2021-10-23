@@ -501,6 +501,7 @@ mwifiex_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	tx_info = MWIFIEX_SKB_TXCB(skb);
+	memset(tx_info, 0, sizeof(*tx_info));
 	tx_info->bss_num = priv->bss_num;
 	tx_info->bss_type = priv->bss_type;
 
@@ -603,7 +604,7 @@ static struct net_device_stats *mwifiex_get_stats(struct net_device *dev)
 static u16
 mwifiex_netdev_select_wmm_queue(struct net_device *dev, struct sk_buff *skb)
 {
-	skb->priority = cfg80211_classify8021d(skb, NULL);
+	skb->priority = cfg80211_classify8021d(skb);
 	return mwifiex_1d_to_wmm_queue[skb->priority];
 }
 

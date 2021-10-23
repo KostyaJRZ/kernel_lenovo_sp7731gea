@@ -49,6 +49,9 @@
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/arm-ipi.h>
+
 /*
  * as from 2.5, kernels no longer have an init_tasks structure
  * so we need some other way of telling a new secondary core
@@ -114,6 +117,11 @@ int __cpuinit __cpu_up(unsigned int cpu, struct task_struct *idle)
 	return ret;
 }
 
+static void __cpuinit smp_store_cpu_info(unsigned int cpuid)
+{
+	store_cpu_topology(cpuid);
+}
+
 /*
  * This is the secondary CPU boot entry.  We're using this CPUs
  * idle thread stack, but a set of temporary page tables.
@@ -123,8 +131,6 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 	struct mm_struct *mm = &init_mm;
 	unsigned int cpu = smp_processor_id();
 
-	printk("CPU%u: Booted secondary processor\n", cpu);
-
 	/*
 	 * All kernel threads share the same mm context; grab a
 	 * reference and switch to it.
@@ -132,6 +138,9 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 	atomic_inc(&mm->mm_count);
 	current->active_mm = mm;
 	cpumask_set_cpu(cpu, mm_cpumask(mm));
+
+	set_my_cpu_offset(per_cpu_offset(smp_processor_id()));
+	printk("CPU%u: Booted secondary processor\n", cpu);
 
 	/*
 	 * TTBR0 is only used for the identity mapping at this stage. Make it
@@ -147,6 +156,13 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 		cpu_ops[cpu]->cpu_postboot();
 
 	/*
+	 * Enable GIC and timers.
+	 */
+	notify_cpu_starting(cpu);
+
+	smp_store_cpu_info(cpu);
+
+	/*
 	 * OK, now it's safe to let the boot CPU continue.  Wait for
 	 * the CPU migration code to notice that the CPU is online
 	 * before we continue.
@@ -154,11 +170,7 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 	set_cpu_online(cpu, true);
 	complete(&cpu_running);
 
-	/*
-	 * Enable GIC and timers.
-	 */
-	notify_cpu_starting(cpu);
-
+	local_dbg_enable();
 	local_irq_enable();
 	local_fiq_enable();
 
@@ -266,11 +278,16 @@ void cpu_die(void)
 
 void __init smp_cpus_done(unsigned int max_cpus)
 {
-	pr_info("SMP: Total of %d processors activated.\n", num_online_cpus());
+	unsigned long bogosum = loops_per_jiffy * num_online_cpus();
+
+	pr_info("SMP: Total of %d processors activated (%lu.%02lu BogoMIPS).\n",
+		num_online_cpus(), bogosum / (500000/HZ),
+		(bogosum / (5000/HZ)) % 100);
 }
 
 void __init smp_prepare_boot_cpu(void)
 {
+	set_my_cpu_offset(per_cpu_offset(smp_processor_id()));
 }
 
 static void (*smp_cross_call)(const struct cpumask *, unsigned int);
@@ -388,6 +405,10 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
 	int err;
 	unsigned int cpu, ncores = num_possible_cpus();
 
+	init_cpu_topology();
+
+	smp_store_cpu_info(smp_processor_id());
+
 	/*
 	 * are we trying to boot more cores than exist?
 	 */
@@ -457,7 +478,7 @@ void show_ipi_list(struct seq_file *p, int prec)
 	for (i = 0; i < NR_IPI; i++) {
 		seq_printf(p, "%*s%u:%s", prec - 1, "IPI", i + IPI_RESCHEDULE,
 			   prec >= 4 ? " " : "");
-		for_each_present_cpu(cpu)
+		for_each_online_cpu(cpu)
 			seq_printf(p, "%10u ",
 				   __get_irq_stat(cpu, ipi_irqs[i]));
 		seq_printf(p, "      %s\n", ipi_types[i]);

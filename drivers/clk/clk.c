@@ -21,8 +21,6 @@
 #include <linux/init.h>
 #include <linux/sched.h>
 
-#if defined(CONFIG_COMMON_CLK)
-
 static DEFINE_SPINLOCK(enable_lock);
 static DEFINE_MUTEX(prepare_lock);
 
@@ -771,7 +769,7 @@ int clk_prepare(struct clk *clk)
 }
 EXPORT_SYMBOL_GPL(clk_prepare);
 
-static void __clk_disable(struct clk *clk)
+void __clk_disable(struct clk *clk)
 {
 	if (!clk)
 		return;
@@ -813,7 +811,7 @@ void clk_disable(struct clk *clk)
 }
 EXPORT_SYMBOL_GPL(clk_disable);
 
-static int __clk_enable(struct clk *clk)
+int __clk_enable(struct clk *clk)
 {
 	int ret = 0;
 
@@ -1632,7 +1630,8 @@ int __clk_init(struct device *dev, struct clk *clk)
 	 * this clock
 	 */
 	hlist_for_each_entry_safe(orphan, tmp2, &clk_orphan_list, child_node) {
-		if (orphan->ops->get_parent) {
+		if (orphan->num_parents && orphan->ops->get_parent) {
+			printk("orphan %s \n", orphan->name);
 			i = orphan->ops->get_parent(orphan->hw);
 			if (!strcmp(clk->name, orphan->parent_names[i]))
 				__clk_reparent(orphan, clk);
@@ -1971,8 +1970,6 @@ int clk_notifier_unregister(struct clk *clk, struct notifier_block *nb)
 }
 EXPORT_SYMBOL_GPL(clk_notifier_unregister);
 
-#endif /* CONFIG_COMMON_CLK */
-
 #ifdef CONFIG_OF
 /**
  * struct of_clk_provider - Clock provider registration structure
@@ -2005,8 +2002,6 @@ struct clk *of_clk_src_simple_get(struct of_phandle_args *clkspec,
 }
 EXPORT_SYMBOL_GPL(of_clk_src_simple_get);
 
-#if defined(CONFIG_COMMON_CLK)
-
 struct clk *of_clk_src_onecell_get(struct of_phandle_args *clkspec, void *data)
 {
 	struct clk_onecell_data *clk_data = data;
@@ -2020,8 +2015,6 @@ struct clk *of_clk_src_onecell_get(struct of_phandle_args *clkspec, void *data)
 	return clk_data->clks[idx];
 }
 EXPORT_SYMBOL_GPL(of_clk_src_onecell_get);
-
-#endif /* CONFIG_COMMON_CLK */
 
 /**
  * of_clk_add_provider() - Register a clock provider for a node
@@ -2092,6 +2085,12 @@ struct clk *of_clk_get_from_provider(struct of_phandle_args *clkspec)
 	return clk;
 }
 
+int of_clk_get_parent_count(struct device_node *np)
+{
+	return of_count_phandle_with_args(np, "clocks", "#clock-cells");
+}
+EXPORT_SYMBOL_GPL(of_clk_get_parent_count);
+
 const char *of_clk_get_parent_name(struct device_node *np, int index)
 {
 	struct of_phandle_args clkspec;
@@ -2116,8 +2115,6 @@ const char *of_clk_get_parent_name(struct device_node *np, int index)
 }
 EXPORT_SYMBOL_GPL(of_clk_get_parent_name);
 
-#if defined(CONFIG_COMMON_CLK)
-
 /**
  * of_clk_init() - Scan and init clock providers from the DT
  * @matches: array of compatible values and init functions for providers.
@@ -2138,7 +2135,4 @@ void __init of_clk_init(const struct of_device_id *matches)
 		clk_init_cb(np);
 	}
 }
-
-#endif /* CONFIG_COMMON_CLK */
-
 #endif

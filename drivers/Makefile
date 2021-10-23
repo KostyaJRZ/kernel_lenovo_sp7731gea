@@ -8,8 +8,6 @@
 obj-y				+= irqchip/
 obj-y				+= bus/
 
-obj-$(CONFIG_GENERIC_PHY)	+= phy/
-
 # GPIO must come after pinctrl as gpios may need to mux pins etc
 obj-y				+= pinctrl/
 obj-y				+= gpio/
@@ -19,7 +17,6 @@ obj-$(CONFIG_PARISC)		+= parisc/
 obj-$(CONFIG_RAPIDIO)		+= rapidio/
 obj-y				+= video/
 obj-y				+= idle/
-obj-y				+= soc/
 
 # IPMI must come before ACPI in order to provide IPMI opregion support
 obj-$(CONFIG_IPMI_HANDLER)	+= char/ipmi/
@@ -58,7 +55,7 @@ obj-$(CONFIG_FB_I810)           += video/i810/
 obj-$(CONFIG_FB_INTEL)          += video/intelfb/
 
 obj-$(CONFIG_PARPORT)		+= parport/
-obj-y				+= base/ block/ misc/ mfd/ nfc/ soc/
+obj-y				+= base/ block/ misc/ mfd/ nfc/
 obj-$(CONFIG_NUBUS)		+= nubus/
 obj-y				+= macintosh/
 obj-$(CONFIG_IDE)		+= ide/
@@ -67,8 +64,6 @@ obj-$(CONFIG_ATA)		+= ata/
 obj-$(CONFIG_TARGET_CORE)	+= target/
 obj-$(CONFIG_MTD)		+= mtd/
 obj-$(CONFIG_SPI)		+= spi/
-obj-$(CONFIG_SPMI)		+= spmi/
-obj-$(CONFIG_SLIMBUS)		+= slimbus/
 obj-y				+= hsi/
 obj-y				+= net/
 obj-$(CONFIG_ATM)		+= atm/
@@ -101,6 +96,7 @@ obj-$(CONFIG_PPS)		+= pps/
 obj-$(CONFIG_PTP_1588_CLOCK)	+= ptp/
 obj-$(CONFIG_W1)		+= w1/
 obj-$(CONFIG_POWER_SUPPLY)	+= power/
+obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery/
 obj-$(CONFIG_HWMON)		+= hwmon/
 obj-$(CONFIG_THERMAL)		+= thermal/
 obj-$(CONFIG_WATCHDOG)		+= watchdog/
@@ -112,6 +108,7 @@ obj-$(CONFIG_EDAC)		+= edac/
 obj-$(CONFIG_EISA)		+= eisa/
 obj-y				+= lguest/
 obj-$(CONFIG_CPU_FREQ)		+= cpufreq/
+obj-$(CONFIG_SPRD_CPU_DYNAMIC_HOTPLUG)	+=cpuhotplug/
 obj-$(CONFIG_CPU_IDLE)		+= cpuidle/
 obj-y				+= mmc/
 obj-$(CONFIG_MEMSTICK)		+= memstick/
@@ -137,6 +134,7 @@ obj-$(CONFIG_VHOST_RING)	+= vhost/
 obj-$(CONFIG_VLYNQ)		+= vlynq/
 obj-$(CONFIG_STAGING)		+= staging/
 obj-y				+= platform/
+obj-y	+= autotst/
 #common clk code
 obj-y				+= clk/
 
@@ -159,12 +157,10 @@ obj-$(CONFIG_VME_BUS)		+= vme/
 obj-$(CONFIG_IPACK_BUS)		+= ipack/
 obj-$(CONFIG_NTB)		+= ntb/
 
-#MobiCore
-obj-$(CONFIG_MOBICORE_SUPPORT)  += gud/
+obj-$(CONFIG_SIPC)		+= sipc/
+obj-$(CONFIG_SENSORS)           += sensor/
 
-obj-$(CONFIG_CORESIGHT)		+= coresight/
-obj-$(CONFIG_ESOC)		+= esoc/
+obj-$(CONFIG_SPRD_IQ)           += iq/
 
-obj-$(CONFIG_BIF)		+= bif/
-obj-$(CONFIG_SENSORS)		+= sensors/
-obj-$(CONFIG_SENSORS_SSC)	+= sensors/
+obj-$(CONFIG_GATOR)		+= gator/
+obj-y	     			+= ontim/

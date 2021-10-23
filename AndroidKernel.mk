@@ -1,101 +1,64 @@
-#Android makefile to build kernel as a part of Android Build
-PERL		= perl
-
-TARGET_KERNEL_ARCH := $(strip $(TARGET_KERNEL_ARCH))
-ifeq ($(TARGET_KERNEL_ARCH),)
-KERNEL_ARCH := arm
+ifeq ($(strip $(TARGET_BOARD_DDR_1G)),true)
+kernel_prepear_CMD := kernel/prepear.sh $(TARGET_PRODUCT) $(KERNEL_DEFCONFIG) $(TARGET_BOARD_DDR_1G)
 else
-KERNEL_ARCH := $(TARGET_KERNEL_ARCH)
+kernel_prepear_CMD := kernel/prepear.sh $(TARGET_PRODUCT) $(KERNEL_DEFCONFIG) false
 endif
-
-TARGET_KERNEL_HEADER_ARCH := $(strip $(TARGET_KERNEL_HEADER_ARCH))
-ifeq ($(TARGET_KERNEL_HEADER_ARCH),)
-KERNEL_HEADER_ARCH := $(KERNEL_ARCH)
-else
-$(warning Forcing kernel header generation only for '$(TARGET_KERNEL_HEADER_ARCH)')
-KERNEL_HEADER_ARCH := $(TARGET_KERNEL_HEADER_ARCH)
-endif
-
-KERNEL_HEADER_DEFCONFIG := $(strip $(KERNEL_HEADER_DEFCONFIG))
-ifeq ($(KERNEL_HEADER_DEFCONFIG),)
-KERNEL_HEADER_DEFCONFIG := $(KERNEL_DEFCONFIG)
-endif
-
-TARGET_KERNEL_CROSS_COMPILE_PREFIX := $(strip $(TARGET_KERNEL_CROSS_COMPILE_PREFIX))
-ifeq ($(TARGET_KERNEL_CROSS_COMPILE_PREFIX),)
-KERNEL_CROSS_COMPILE := arm-eabi-
-else
-KERNEL_CROSS_COMPILE := $(TARGET_KERNEL_CROSS_COMPILE_PREFIX)
-endif
-
-ifeq ($(TARGET_PREBUILT_KERNEL),)
-
-KERNEL_OUT := $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ
+KERNEL_OUT := $(TARGET_OUT_INTERMEDIATES)/KERNEL
 KERNEL_CONFIG := $(KERNEL_OUT)/.config
-
-ifeq ($(TARGET_USES_UNCOMPRESSED_KERNEL),true)
-$(info Using uncompressed kernel)
-TARGET_PREBUILT_INT_KERNEL := $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/Image
-else
-TARGET_PREBUILT_INT_KERNEL := $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/zImage
-endif
-
-ifeq ($(TARGET_KERNEL_APPEND_DTB), true)
-$(info Using appended DTB)
-TARGET_PREBUILT_INT_KERNEL := $(TARGET_PREBUILT_INT_KERNEL)-dtb
-endif
-
-KERNEL_HEADERS_INSTALL := $(KERNEL_OUT)/usr
-KERNEL_MODULES_INSTALL := system
 KERNEL_MODULES_OUT := $(TARGET_OUT)/lib/modules
 
-TARGET_PREBUILT_KERNEL := $(TARGET_PREBUILT_INT_KERNEL)
-
-define mv-modules
-mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.dep`;\
-if [ "$$mdpath" != "" ];then\
-mpath=`dirname $$mdpath`;\
-ko=`find $$mpath/kernel -type f -name *.ko`;\
-for i in $$ko; do mv $$i $(KERNEL_MODULES_OUT)/; done;\
-fi
-endef
-
-define clean-module-folder
-mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.dep`;\
-if [ "$$mdpath" != "" ];then\
-mpath=`dirname $$mdpath`; rm -rf $$mpath;\
-fi
-endef
-
-$(KERNEL_OUT):
-	mkdir -p $(KERNEL_OUT)
-
-$(KERNEL_CONFIG): $(KERNEL_OUT)
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) $(KERNEL_DEFCONFIG)
-
-$(TARGET_PREBUILT_INT_KERNEL): $(KERNEL_OUT) $(KERNEL_HEADERS_INSTALL)
-	$(hide) rm -rf $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE)
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) modules
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) INSTALL_MOD_PATH=../../$(KERNEL_MODULES_INSTALL) INSTALL_MOD_STRIP=1 ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) modules_install
-	$(mv-modules)
-	$(clean-module-folder)
-
-$(KERNEL_HEADERS_INSTALL): $(KERNEL_OUT)
-	$(hide) rm -f ../$(KERNEL_CONFIG)
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_HEADER_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) $(KERNEL_HEADER_DEFCONFIG)
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_HEADER_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) headers_install
-	$(hide) rm -f ../$(KERNEL_CONFIG)
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) $(KERNEL_DEFCONFIG)
-
-kerneltags: $(KERNEL_OUT) $(KERNEL_CONFIG)
-	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) tags
-
-kernelconfig: $(KERNEL_OUT) $(KERNEL_CONFIG)
-	env KCONFIG_NOTIMESTAMP=true \
-	     $(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) menuconfig
-	env KCONFIG_NOTIMESTAMP=true \
-	     $(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) savedefconfig
-	cp $(KERNEL_OUT)/defconfig kernel/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG)
-
+ifeq ($(strip $(KERNEL_UBOOT_USE_ARCH_ARM64)),true)
+TRUE_ARCH := arm64
+TRUE_CROSS_COMPILE := aarch64-linux-android-
+else
+TRUE_ARCH := arm
+TRUE_CROSS_COMPILE := arm-eabi-
 endif
+
+ifeq ($(USES_UNCOMPRESSED_KERNEL),true)
+TARGET_PREBUILT_KERNEL := $(KERNEL_OUT)/arch/$(TRUE_ARCH)/boot/Image
+else
+TARGET_PREBUILT_KERNEL := $(KERNEL_OUT)/arch/$(TRUE_ARCH)/boot/zImage
+endif
+
+.PHONY : build-kernel
+build-kernel:
+	@echo "====build-kernel stub===="
+
+
+$(KERNEL_OUT): FORCE
+	@echo "==== Copy Kernel files "$(TARGET_PRODUCT)" "$(KERNEL_DEFCONFIG)" "$(TARGET_BOARD_DDR_1G)"... ===="
+	$(shell $(kernel_prepear_CMD))
+	@echo "==== Start Kernel Compiling ... ===="
+
+
+$(KERNEL_CONFIG): kernel/arch/$(TRUE_ARCH)/configs/$(KERNEL_DEFCONFIG)
+	echo "KERNEL_OUT = $KERNEL_OUT,  KERNEL_DEFCONFIG = KERNEL_DEFCONFIG"
+	mkdir -p $(KERNEL_OUT)
+	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(TRUE_ARCH) CROSS_COMPILE=$(TRUE_CROSS_COMPILE) $(KERNEL_DEFCONFIG)
+
+ifeq ($(TARGET_BUILD_VARIANT),user)
+USER_CONFIG := $(TARGET_OUT)/dummy
+TARGET_DEVICE_USER_CONFIG := $(PLATDIR)/user_diff_config
+TARGET_DEVICE_CUSTOM_CONFIG := device/sprd/$(TARGET_DEVICE)/ProjectConfig.mk
+
+$(USER_CONFIG) : $(KERNEL_CONFIG)
+	$(info $(shell ./kernel/scripts/sprd_custom_config_kernel.sh $(KERNEL_CONFIG) $(TARGET_DEVICE_CUSTOM_CONFIG)))
+	$(info $(shell ./kernel/scripts/sprd_create_user_config.sh $(KERNEL_CONFIG) $(TARGET_DEVICE_USER_CONFIG)))
+else
+USER_CONFIG  := $(TARGET_OUT)/dummy
+TARGET_DEVICE_CUSTOM_CONFIG := device/sprd/$(TARGET_DEVICE)/ProjectConfig.mk
+$(USER_CONFIG) : $(KERNEL_CONFIG)
+	$(info $(shell ./kernel/scripts/sprd_custom_config_kernel.sh $(KERNEL_CONFIG) $(TARGET_DEVICE_CUSTOM_CONFIG)))
+endif
+
+$(TARGET_PREBUILT_KERNEL) : $(KERNEL_OUT) $(USER_CONFIG)|$(KERNEL_CONFIG)
+	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(TRUE_ARCH) CROSS_COMPILE=$(TRUE_CROSS_COMPILE) headers_install
+	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(TRUE_ARCH) CROSS_COMPILE=$(TRUE_CROSS_COMPILE) -j4
+	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(TRUE_ARCH) CROSS_COMPILE=$(TRUE_CROSS_COMPILE) modules
+	@-mkdir -p $(KERNEL_MODULES_OUT)
+	@-find $(KERNEL_OUT) -name *.ko | xargs -I{} cp {} $(KERNEL_MODULES_OUT)
+
+kernelheader:
+	mkdir -p $(KERNEL_OUT)
+	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=$(TRUE_ARCH) CROSS_COMPILE=$(TRUE_CROSS_COMPILE) headers_install

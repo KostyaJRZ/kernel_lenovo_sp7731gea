@@ -5,6 +5,10 @@
 obj-$(CONFIG_THERMAL)		+= thermal_sys.o
 thermal_sys-y			+= thermal_core.o
 
+# interface to/from other layers providing sensors
+thermal_sys-$(CONFIG_THERMAL_HWMON)		+= thermal_hwmon.o
+thermal_sys-$(CONFIG_THERMAL_OF)		+= of-thermal.o
+
 # governors
 thermal_sys-$(CONFIG_THERMAL_GOV_FAIR_SHARE)	+= fair_share.o
 thermal_sys-$(CONFIG_THERMAL_GOV_STEP_WISE)	+= step_wise.o
@@ -23,7 +27,7 @@ obj-$(CONFIG_DB8500_THERMAL)	+= db8500_thermal.o
 obj-$(CONFIG_ARMADA_THERMAL)	+= armada_thermal.o
 obj-$(CONFIG_DB8500_CPUFREQ_COOLING)	+= db8500_cpufreq_cooling.o
 obj-$(CONFIG_INTEL_POWERCLAMP)	+= intel_powerclamp.o
-obj-$(CONFIG_THERMAL_MONITOR)	+= msm_thermal.o msm_thermal-dev.o
-obj-$(CONFIG_THERMAL_TSENS8974)	+= msm8974-tsens.o
-obj-$(CONFIG_THERMAL_QPNP)	+= qpnp-temp-alarm.o
-obj-$(CONFIG_THERMAL_QPNP_ADC_TM)	+= qpnp-adc-tm.o
+
+# Added for different sprd thm
+obj-$(CONFIG_THERMAL_SC2713S)		+= sprd_thm.o sprd_2713s_thm.o
+obj-$(CONFIG_THERMAL_SC2713)		+= sprd_thm.o sprd_2713_thm.o

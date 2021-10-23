@@ -6,7 +6,11 @@ obj-$(CONFIG_MMC_ARMMMCI)	+= mmci.o
 obj-$(CONFIG_MMC_PXA)		+= pxamci.o
 obj-$(CONFIG_MMC_MXC)		+= mxcmmc.o
 obj-$(CONFIG_MMC_MXS)		+= mxs-mmc.o
-obj-$(CONFIG_MMC_SDHCI)		+= sdhci.o
+ifeq ($(CONFIG_ARCH_SCX35L64),y)
+obj-$(CONFIG_MMC_SDHCI)		+= sprd-sdhci-common-of.o
+else
+obj-$(CONFIG_MMC_SDHCI)		+= sprd-sdhci-common.o
+endif
 obj-$(CONFIG_MMC_SDHCI_PCI)	+= sdhci-pci.o
 obj-$(subst m,y,$(CONFIG_MMC_SDHCI_PCI))	+= sdhci-pci-data.o
 obj-$(CONFIG_MMC_SDHCI_ACPI)	+= sdhci-acpi.o
@@ -37,9 +41,6 @@ tmio_mmc_core-y			:= tmio_mmc_pio.o
 tmio_mmc_core-$(subst m,y,$(CONFIG_MMC_SDHI))	+= tmio_mmc_dma.o
 obj-$(CONFIG_MMC_SDHI)		+= sh_mobile_sdhi.o
 obj-$(CONFIG_MMC_CB710)		+= cb710-mmc.o
-obj-$(CONFIG_MMC_MSM)		+= msm_sdcc.o
-obj-$(CONFIG_MMC_MSM_SPS_SUPPORT) += msm_sdcc_dml.o
-obj-$(CONFIG_MMC_CB710)	+= cb710-mmc.o
 obj-$(CONFIG_MMC_VIA_SDMMC)	+= via-sdmmc.o
 obj-$(CONFIG_SDH_BFIN)		+= bfin_sdh.o
 obj-$(CONFIG_MMC_DW)		+= dw_mmc.o
@@ -51,7 +52,11 @@ obj-$(CONFIG_MMC_JZ4740)	+= jz4740_mmc.o
 obj-$(CONFIG_MMC_VUB300)	+= vub300.o
 obj-$(CONFIG_MMC_USHC)		+= ushc.o
 obj-$(CONFIG_MMC_WMT)		+= wmt-sdmmc.o
-
+ifeq ($(CONFIG_ARCH_SCX35L64),y)
+obj-$(CONFIG_MMC_SDHCI_SPRD)    += sprd-sdhci-fix-of.o
+else
+obj-$(CONFIG_MMC_SDHCI_SPRD)    += sprd-sdhci-fix.o
+endif
 obj-$(CONFIG_MMC_REALTEK_PCI)	+= rtsx_pci_sdmmc.o
 
 obj-$(CONFIG_MMC_REALTEK_PCI)	+= rtsx_pci_sdmmc.o
@@ -64,7 +69,6 @@ obj-$(CONFIG_MMC_SDHCI_TEGRA)		+= sdhci-tegra.o
 obj-$(CONFIG_MMC_SDHCI_OF_ESDHC)	+= sdhci-of-esdhc.o
 obj-$(CONFIG_MMC_SDHCI_OF_HLWD)		+= sdhci-of-hlwd.o
 obj-$(CONFIG_MMC_SDHCI_BCM2835)		+= sdhci-bcm2835.o
-obj-$(CONFIG_MMC_SDHCI_MSM)		+= sdhci-msm.o
 
 ifeq ($(CONFIG_CB710_DEBUG),y)
 	CFLAGS-cb710-mmc	+= -DDEBUG

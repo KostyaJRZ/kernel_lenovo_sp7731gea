@@ -224,7 +224,7 @@ struct zs_pool {
  * performs VM mapping faster than copying, then it should be added here
  * so that USE_PGTABLE_MAPPING is defined. This causes zsmalloc to use
  * page table mapping rather than copying for object mapping.
- */
+*/
 #if defined(CONFIG_ARM) && !defined(MODULE)
 #define USE_PGTABLE_MAPPING
 #endif
@@ -423,7 +423,7 @@ static struct page *get_next_page(struct page *page)
 	if (is_last_page(page))
 		next = NULL;
 	else if (is_first_page(page))
-		next = (struct page *)page_private(page);
+		next = (struct page *)page->private;
 	else
 		next = list_entry(page->lru.next, struct page, lru);
 
@@ -494,7 +494,12 @@ static void free_zspage(struct page *first_page)
 	head_extra = (struct page *)page_private(first_page);
 
 	reset_page(first_page);
+
+#ifndef CONFIG_SPRD_PAGERECORDER
 	__free_page(first_page);
+#else
+	__free_page_nopagedebug(first_page);
+#endif
 
 	/* zspage with only 1 system page */
 	if (!head_extra)
@@ -503,10 +508,18 @@ static void free_zspage(struct page *first_page)
 	list_for_each_entry_safe(nextp, tmp, &head_extra->lru, lru) {
 		list_del(&nextp->lru);
 		reset_page(nextp);
+#ifndef CONFIG_SPRD_PAGERECORDER
 		__free_page(nextp);
+#else
+		__free_page_nopagedebug(nextp);
+#endif
 	}
 	reset_page(head_extra);
+#ifndef CONFIG_SPRD_PAGERECORDER
 	__free_page(head_extra);
+#else
+	__free_page_nopagedebug(head_extra);
+#endif
 }
 
 /* Initialize a newly allocated zspage */
@@ -577,8 +590,11 @@ static struct page *alloc_zspage(struct size_class *class, gfp_t flags)
 	error = -ENOMEM;
 	for (i = 0; i < class->pages_per_zspage; i++) {
 		struct page *page;
-
-		page = alloc_page(flags);
+		#ifndef CONFIG_SPRD_PAGERECORDER
+			page = alloc_page(flags);
+		#else
+			page = alloc_page_nopagedebug(flags);
+		#endif
 		if (!page)
 			goto cleanup;
 
@@ -590,7 +606,7 @@ static struct page *alloc_zspage(struct size_class *class, gfp_t flags)
 			first_page->inuse = 0;
 		}
 		if (i == 1)
-			set_page_private(first_page, (unsigned long)page);
+			first_page->private = (unsigned long)page;
 		if (i >= 1)
 			page->first_page = first_page;
 		if (i >= 2)
@@ -853,7 +869,8 @@ void zs_destroy_pool(struct zs_pool *pool)
 
 		for (fg = 0; fg < _ZS_NR_FULLNESS_GROUPS; fg++) {
 			if (class->fullness_list[fg]) {
-				pr_info("Freeing non-empty class with size %db, fullness group %d\n",
+				pr_info("Freeing non-empty class with size "
+					"%db, fullness group %d\n",
 					class->size, fg);
 			}
 		}
@@ -976,7 +993,7 @@ EXPORT_SYMBOL_GPL(zs_free);
  * against nested mappings.
  *
  * This function returns with preemption and page faults disabled.
- */
+*/
 void *zs_map_object(struct zs_pool *pool, unsigned long handle,
 			enum zs_mapmode mm)
 {

@@ -2,6 +2,8 @@ menu "Device Drivers"
 
 source "drivers/base/Kconfig"
 
+source "drivers/battery/Kconfig"
+
 source "drivers/bus/Kconfig"
 
 source "drivers/connector/Kconfig"
@@ -50,11 +52,7 @@ source "drivers/char/Kconfig"
 
 source "drivers/i2c/Kconfig"
 
-source "drivers/slimbus/Kconfig"
-
 source "drivers/spi/Kconfig"
-
-source "drivers/spmi/Kconfig"
 
 source "drivers/ssbi/Kconfig"
 
@@ -114,8 +112,6 @@ source "drivers/edac/Kconfig"
 
 source "drivers/rtc/Kconfig"
 
-source "drivers/esoc/Kconfig"
-
 source "drivers/dma/Kconfig"
 
 source "drivers/dca/Kconfig"
@@ -172,18 +168,20 @@ source "drivers/irqchip/Kconfig"
 
 source "drivers/ipack/Kconfig"
 
-source "drivers/gud/Kconfig"
-
 source "drivers/reset/Kconfig"
 
-source "drivers/coresight/Kconfig"
+source "drivers/sipc/Kconfig"
 
-source "drivers/bif/Kconfig"
+source "drivers/sensor/Kconfig"
 
-source "drivers/sensors/Kconfig"
+source "drivers/iq/Kconfig"
 
-source "drivers/phy/Kconfig"
+source "drivers/autotst/Kconfig"
 
-source "drivers/soc/Kconfig"
+source "drivers/gator/Kconfig"
+
+source "drivers/cpuhotplug/Kconfig"
+
+source "drivers/ontim/Kconfig"
 
 endmenu

@@ -47,9 +47,6 @@
 #define ARCH_LOW_ADDRESS_LIMIT	PHYS_MASK
 #endif /* __KERNEL__ */
 
-extern unsigned int boot_reason;
-extern unsigned int cold_boot;
-
 struct debug_info {
 	/* Have we suspended stepping by a debugger? */
 	int			suspended_step;
@@ -110,6 +107,11 @@ static inline void compat_start_thread(struct pt_regs *regs, unsigned long pc,
 	regs->pstate = COMPAT_PSR_MODE_USR;
 	if (pc & 1)
 		regs->pstate |= COMPAT_PSR_T_BIT;
+
+#ifdef __AARCH64EB__
+	regs->pstate |= COMPAT_PSR_E_BIT;
+#endif
+
 	regs->compat_sp = sp;
 }
 #endif
@@ -134,8 +136,8 @@ extern struct task_struct *cpu_switch_to(struct task_struct *prev,
 #define task_pt_regs(p) \
 	((struct pt_regs *)(THREAD_START_SP + task_stack_page(p)) - 1)
 
-#define KSTK_EIP(tsk)	task_pt_regs(tsk)->pc
-#define KSTK_ESP(tsk)	task_pt_regs(tsk)->sp
+#define KSTK_EIP(tsk)	((unsigned long)task_pt_regs(tsk)->pc)
+#define KSTK_ESP(tsk)	user_stack_pointer(task_pt_regs(tsk))
 
 /*
  * Prefetching support

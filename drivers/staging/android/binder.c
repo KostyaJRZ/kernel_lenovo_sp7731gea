@@ -26,6 +26,7 @@
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/rtmutex.h>
 #include <linux/mutex.h>
 #include <linux/nsproxy.h>
 #include <linux/poll.h>
@@ -42,7 +43,7 @@
 #include "binder.h"
 #include "binder_trace.h"
 
-static DEFINE_MUTEX(binder_main_lock);
+static DEFINE_RT_MUTEX(binder_main_lock);
 static DEFINE_MUTEX(binder_deferred_lock);
 static DEFINE_MUTEX(binder_mmap_lock);
 
@@ -420,14 +421,14 @@ static long task_close_fd(struct binder_proc *proc, unsigned int fd)
 static inline void binder_lock(const char *tag)
 {
 	trace_binder_lock(tag);
-	mutex_lock(&binder_main_lock);
+	rt_mutex_lock(&binder_main_lock);
 	trace_binder_locked(tag);
 }
 
 static inline void binder_unlock(const char *tag)
 {
 	trace_binder_unlock(tag);
-	mutex_unlock(&binder_main_lock);
+	rt_mutex_unlock(&binder_main_lock);
 }
 
 static void binder_set_nice(long nice)
@@ -1127,9 +1128,8 @@ static int binder_inc_ref(struct binder_ref *ref, int strong,
 }
 
 
-static int binder_dec_ref(struct binder_ref **ptr_to_ref, int strong)
+static int binder_dec_ref(struct binder_ref *ref, int strong)
 {
-	struct binder_ref *ref = *ptr_to_ref;
 	if (strong) {
 		if (ref->strong == 0) {
 			binder_user_error("%d invalid dec strong, ref %d desc %d s %d w %d\n",
@@ -1153,10 +1153,8 @@ static int binder_dec_ref(struct binder_ref **ptr_to_ref, int strong)
 		}
 		ref->weak--;
 	}
-	if (ref->strong == 0 && ref->weak == 0) {
+	if (ref->strong == 0 && ref->weak == 0)
 		binder_delete_ref(ref);
-		*ptr_to_ref = NULL;
-	}
 	return 0;
 }
 
@@ -1284,7 +1282,7 @@ static void binder_transaction_buffer_release(struct binder_proc *proc,
 			binder_debug(BINDER_DEBUG_TRANSACTION,
 				     "        ref %d desc %d (node %d)\n",
 				     ref->debug_id, ref->desc, ref->node->debug_id);
-			binder_dec_ref(&ref, fp->type == BINDER_TYPE_HANDLE);
+			binder_dec_ref(ref, fp->type == BINDER_TYPE_HANDLE);
 		} break;
 
 		case BINDER_TYPE_FD:
@@ -1734,8 +1732,7 @@ err_no_context_mgr_node:
 		thread->return_error = return_error;
 }
 
-static int binder_thread_write(struct binder_proc *proc,
-			struct binder_thread *thread,
+int binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
 			binder_uintptr_t binder_buffer, size_t size,
 			binder_size_t *consumed)
 {
@@ -1793,26 +1790,19 @@ static int binder_thread_write(struct binder_proc *proc,
 				break;
 			case BC_RELEASE:
 				debug_string = "Release";
-				binder_dec_ref(&ref, 1);
+				binder_dec_ref(ref, 1);
 				break;
 			case BC_DECREFS:
 			default:
 				debug_string = "DecRefs";
-				binder_dec_ref(&ref, 0);
+				binder_dec_ref(ref, 0);
 				break;
 			}
-		  if (ref == NULL) {
 			binder_debug(BINDER_DEBUG_USER_REFS,
-			  "binder: %d:%d %s ref deleted",
-			  proc->pid, thread->pid, debug_string);
-		  } else {
-			binder_debug(BINDER_DEBUG_USER_REFS,
-			  "binder: %d:%d %s ref %d desc %d s %d w %d for node %d\n",
-			  proc->pid, thread->pid, debug_string,
-			  ref->debug_id, ref->desc, ref->strong,
-			  ref->weak, ref->node->debug_id);
-		  }
-		  break;
+				     "%d:%d %s ref %d desc %d s %d w %d for node %d\n",
+				     proc->pid, thread->pid, debug_string, ref->debug_id,
+				     ref->desc, ref->strong, ref->weak, ref->node->debug_id);
+			break;
 		}
 		case BC_INCREFS_DONE:
 		case BC_ACQUIRE_DONE: {
@@ -2099,8 +2089,8 @@ static int binder_thread_write(struct binder_proc *proc,
 	return 0;
 }
 
-static void binder_stat_br(struct binder_proc *proc,
-			   struct binder_thread *thread, uint32_t cmd)
+void binder_stat_br(struct binder_proc *proc, struct binder_thread *thread,
+		    uint32_t cmd)
 {
 	trace_binder_return(cmd);
 	if (_IOC_NR(cmd) < ARRAY_SIZE(binder_stats.br)) {
@@ -2758,15 +2748,9 @@ static void binder_vma_close(struct vm_area_struct *vma)
 	binder_defer_work(proc, BINDER_DEFERRED_PUT_FILES);
 }
 
-static int binder_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
-{
-	return VM_FAULT_SIGBUS;
-}
-
 static struct vm_operations_struct binder_vm_ops = {
 	.open = binder_vma_open,
 	.close = binder_vma_close,
-	.fault = binder_vm_fault,
 };
 
 static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
@@ -2964,6 +2948,7 @@ static int binder_node_release(struct binder_node *node, int refs)
 	hlist_for_each_entry(ref, &node->refs, node_entry) {
 		refs++;
 
+#if 0
 		if (!ref->death)
 			continue;
 
@@ -2976,6 +2961,16 @@ static int binder_node_release(struct binder_node *node, int refs)
 			wake_up_interruptible(&ref->proc->wait);
 		} else
 			BUG();
+#endif
+		if (ref->death) {
+			death++;
+			if (list_empty(&ref->death->work.entry)) {
+				ref->death->work.type = BINDER_WORK_DEAD_BINDER;
+				list_add_tail(&ref->death->work.entry, &ref->proc->todo);
+				wake_up_interruptible(&ref->proc->wait);
+			} else
+				BUG();
+		}
 	}
 
 	binder_debug(BINDER_DEBUG_DEAD_BINDER,

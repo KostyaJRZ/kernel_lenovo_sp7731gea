@@ -336,7 +336,6 @@ static int evdev_open(struct inode *inode, struct file *file)
 	if (!client)
 		return -ENOMEM;
 
-	client->clkid = CLOCK_MONOTONIC;
 	client->bufsize = bufsize;
 	spin_lock_init(&client->buffer_lock);
 	snprintf(client->name, sizeof(client->name), "%s-%d",
@@ -721,8 +720,8 @@ static int evdev_disable_suspend_block(struct evdev *evdev,
 
 	spin_lock_irq(&client->buffer_lock);
 	client->use_wake_lock = false;
-	spin_unlock_irq(&client->buffer_lock);
 	wake_lock_destroy(&client->wake_lock);
+	spin_unlock_irq(&client->buffer_lock);
 
 	return 0;
 }

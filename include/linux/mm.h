@@ -31,9 +31,6 @@ extern unsigned long max_mapnr;
 
 extern unsigned long num_physpages;
 extern unsigned long totalram_pages;
-#ifdef CONFIG_FIX_MOVABLE_ZONE
-extern unsigned long total_unmovable_pages;
-#endif
 extern void * high_memory;
 extern int page_cluster;
 
@@ -54,6 +51,9 @@ extern unsigned long sysctl_admin_reserve_kbytes;
 
 /* to align the pointer to the (next) page boundary */
 #define PAGE_ALIGN(addr) ALIGN(addr, PAGE_SIZE)
+
+/* test whether an address (unsigned long or pointer) is aligned to PAGE_SIZE */
+#define PAGE_ALIGNED(addr)	IS_ALIGNED((unsigned long)addr, PAGE_SIZE)
 
 /*
  * Linux kernel virtual memory manager primitives.
@@ -170,6 +170,7 @@ extern pgprot_t protection_map[16];
 #define FAULT_FLAG_RETRY_NOWAIT	0x10	/* Don't drop mmap_sem and wait when retrying */
 #define FAULT_FLAG_KILLABLE	0x20	/* The fault task is in SIGKILL killable region */
 #define FAULT_FLAG_TRIED	0x40	/* second try */
+#define FAULT_FLAG_USER		0x80	/* The fault originated in userspace */
 
 /*
  * vm_fault is filled by the the pagefault handler and passed to the vma's
@@ -308,16 +309,16 @@ unsigned long vmalloc_to_pfn(const void *addr);
  * On nommu, vmalloc/vfree wrap through kmalloc/kfree directly, so there
  * is no special casing required.
  */
-
-#ifdef CONFIG_MMU
-extern int is_vmalloc_addr(const void *x);
-#else
 static inline int is_vmalloc_addr(const void *x)
 {
-	return 0;
-}
-#endif
+#ifdef CONFIG_MMU
+	unsigned long addr = (unsigned long)x;
 
+	return addr >= VMALLOC_START && addr < VMALLOC_END;
+#else
+	return 0;
+#endif
+}
 #ifdef CONFIG_MMU
 extern int is_vmalloc_or_module_addr(const void *x);
 #else
@@ -326,6 +327,8 @@ static inline int is_vmalloc_or_module_addr(const void *x)
 	return 0;
 }
 #endif
+
+extern void kvfree(const void *addr);
 
 static inline void compound_lock(struct page *page)
 {
@@ -924,7 +927,6 @@ extern void pagefault_out_of_memory(void);
 extern void show_free_areas(unsigned int flags);
 extern bool skip_free_areas_node(unsigned int flags, int nid);
 
-void shmem_set_file(struct vm_area_struct *vma, struct file *file);
 int shmem_zero_setup(struct vm_area_struct *);
 
 extern int can_do_mlock(void);
@@ -1008,6 +1010,7 @@ static inline void unmap_shared_mapping_range(struct address_space *mapping,
 
 extern void truncate_pagecache(struct inode *inode, loff_t old, loff_t new);
 extern void truncate_setsize(struct inode *inode, loff_t newsize);
+void pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to);
 void truncate_pagecache_range(struct inode *inode, loff_t offset, loff_t end);
 int truncate_inode_page(struct address_space *mapping, struct page *page);
 int generic_error_remove_page(struct address_space *mapping, struct page *page);
@@ -1344,7 +1347,11 @@ static inline void __free_reserved_page(struct page *page)
 {
 	ClearPageReserved(page);
 	init_page_count(page);
+#ifndef CONFIG_SPRD_PAGERECORDER
 	__free_page(page);
+#else
+	__free_page_nopagedebug(page);
+#endif
 }
 
 static inline void free_reserved_page(struct page *page)
@@ -1502,7 +1509,7 @@ extern int vma_adjust(struct vm_area_struct *vma, unsigned long start,
 extern struct vm_area_struct *vma_merge(struct mm_struct *,
 	struct vm_area_struct *prev, unsigned long addr, unsigned long end,
 	unsigned long vm_flags, struct anon_vma *, struct file *, pgoff_t,
-	struct mempolicy *);
+	struct mempolicy *, const char __user *);
 extern struct anon_vma *find_mergeable_anon_vma(struct vm_area_struct *);
 extern int split_vma(struct mm_struct *,
 	struct vm_area_struct *, unsigned long addr, int new_below);
@@ -1599,7 +1606,7 @@ int write_one_page(struct page *page, int wait);
 void task_dirty_inc(struct task_struct *tsk);
 
 /* readahead.c */
-#define VM_MAX_READAHEAD	512	/* kbytes */
+#define VM_MAX_READAHEAD	128	/* kbytes */
 #define VM_MIN_READAHEAD	16	/* kbytes (includes current page) */
 
 int force_page_cache_readahead(struct address_space *mapping, struct file *filp,
@@ -1753,32 +1760,6 @@ int in_gate_area(struct mm_struct *mm, unsigned long addr);
 int in_gate_area_no_mm(unsigned long addr);
 #define in_gate_area(mm, addr) ({(void)mm; in_gate_area_no_mm(addr);})
 #endif	/* __HAVE_ARCH_GATE_AREA */
-
-#ifdef CONFIG_USE_USER_ACCESSIBLE_TIMERS
-static inline int use_user_accessible_timers(void) { return 1; }
-extern int in_user_timers_area(struct mm_struct *mm, unsigned long addr);
-extern struct vm_area_struct *get_user_timers_vma(struct mm_struct *mm);
-extern int get_user_timer_page(struct vm_area_struct *vma,
-	struct mm_struct *mm, unsigned long start, unsigned int gup_flags,
-	struct page **pages, int idx, int *goto_next_page);
-#else
-static inline int use_user_accessible_timers(void) { return 0; }
-static inline int in_user_timers_area(struct mm_struct *mm, unsigned long addr)
-{
-	return 0;
-}
-static inline struct vm_area_struct *get_user_timers_vma(struct mm_struct *mm)
-{
-	return NULL;
-}
-static inline int get_user_timer_page(struct vm_area_struct *vma,
-	struct mm_struct *mm, unsigned long start, unsigned int gup_flags,
-	struct page **pages, int idx, int *goto_next_page)
-{
-	*goto_next_page = 0;
-	return 0;
-}
-#endif
 
 #ifdef CONFIG_SYSCTL
 extern int sysctl_drop_caches;

@@ -30,7 +30,6 @@
 #include <linux/bug.h>
 #include <linux/compiler.h>
 #include <linux/sort.h>
-#include <linux/dma-mapping.h>
 
 #include <asm/unified.h>
 #include <asm/cp15.h>
@@ -38,6 +37,7 @@
 #include <asm/cputype.h>
 #include <asm/elf.h>
 #include <asm/procinfo.h>
+#include <asm/psci.h>
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/smp_plat.h>
@@ -98,11 +98,6 @@ EXPORT_SYMBOL(system_serial_high);
 unsigned int elf_hwcap __read_mostly;
 EXPORT_SYMBOL(elf_hwcap);
 
-unsigned int boot_reason;
-EXPORT_SYMBOL(boot_reason);
-
-unsigned int cold_boot;
-EXPORT_SYMBOL(cold_boot);
 
 #ifdef MULTI_CPU
 struct processor processor __read_mostly;
@@ -266,6 +261,19 @@ static int cpu_has_aliasing_icache(unsigned int arch)
 {
 	int aliasing_icache;
 	unsigned int id_reg, num_sets, line_size;
+
+#ifdef CONFIG_BIG_LITTLE
+	/*
+	 * We expect a combination of Cortex-A15 and Cortex-A7 cores.
+	 * A7 = VIPT aliasing I-cache
+	 * A15 = PIPT (non-aliasing) I-cache
+	 * To cater for this discrepancy, let's assume aliasing I-cache
+	 * all the time.  This means unneeded extra work on the A15 but
+	 * only ptrace is affected which is not performance critical.
+	 */
+	if ((read_cpuid_id() & 0xff0ffff0) == 0x410fc0f0)
+		return 1;
+#endif
 
 	/* PIPT caches never alias. */
 	if (icache_is_pipt())
@@ -811,9 +819,6 @@ void __init setup_arch(char **cmdline_p)
 
 	parse_early_param();
 
-	if (mdesc->init_very_early)
-		mdesc->init_very_early();
-
 	sort(&meminfo.bank, meminfo.nr_banks, sizeof(meminfo.bank[0]), meminfo_cmp, NULL);
 	sanity_check_meminfo();
 	arm_memblock_init(&meminfo, mdesc);
@@ -827,9 +832,15 @@ void __init setup_arch(char **cmdline_p)
 	unflatten_device_tree();
 
 	arm_dt_init_cpu_maps();
+	psci_init();
 #ifdef CONFIG_SMP
 	if (is_smp()) {
-		smp_set_ops(mdesc->smp);
+		if (!mdesc->smp_init || !mdesc->smp_init()) {
+			if (psci_smp_available())
+				smp_set_ops(&psci_smp_ops);
+			else if (mdesc->smp)
+				smp_set_ops(mdesc->smp);
+		}
 		smp_init_cpus();
 	}
 #endif
@@ -903,6 +914,9 @@ static const char *hwcap_str[] = {
 	"vfpv4",
 	"idiva",
 	"idivt",
+	"vfpd32",
+	"lpae",
+	"evtstrm",
 	NULL
 };
 
@@ -911,7 +925,10 @@ static int c_show(struct seq_file *m, void *v)
 	int i, j;
 	u32 cpuid;
 
-	for_each_present_cpu(i) {
+	seq_printf(m, "Processor\t: %s rev %d (%s)\n",
+		   cpu_name, read_cpuid_id() & 15, elf_platform);
+
+	for_each_online_cpu(i) {
 		/*
 		 * glibc reads /proc/cpuinfo to determine the number of
 		 * online processors, looking for lines beginning with
@@ -990,9 +1007,3 @@ const struct seq_operations cpuinfo_op = {
 	.stop	= c_stop,
 	.show	= c_show
 };
-
-void arch_setup_pdev_archdata(struct platform_device *pdev)
-{
-	pdev->archdata.dma_mask = DMA_BIT_MASK(32);
-	pdev->dev.dma_mask = &pdev->archdata.dma_mask;
-}

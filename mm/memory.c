@@ -60,7 +60,6 @@
 #include <linux/gfp.h>
 #include <linux/migrate.h>
 #include <linux/string.h>
-#include <linux/bug.h>
 
 #include <asm/io.h>
 #include <asm/pgalloc.h>
@@ -119,6 +118,8 @@ __setup("norandmaps", disable_randmaps);
 
 unsigned long zero_pfn __read_mostly;
 unsigned long highest_memmap_pfn __read_mostly;
+
+EXPORT_SYMBOL(zero_pfn);
 
 /*
  * CONFIG_MMU architectures set up ZERO_PAGE in their paging_init()
@@ -193,7 +194,11 @@ static int tlb_next_batch(struct mmu_gather *tlb)
 	if (tlb->batch_count == MAX_GATHER_BATCH_COUNT)
 		return 0;
 
+#ifndef CONFIG_SPRD_PAGERECORDER
 	batch = (void *)__get_free_pages(GFP_NOWAIT | __GFP_NOWARN, 0);
+#else
+	batch = (void *)__get_free_pages_nopagedebug(GFP_NOWAIT | __GFP_NOWARN, 0);
+#endif
 	if (!batch)
 		return 0;
 
@@ -712,9 +717,6 @@ static void print_bad_pte(struct vm_area_struct *vma, unsigned long addr,
 	if (vma->vm_file && vma->vm_file->f_op)
 		printk(KERN_ALERT "vma->vm_file->f_op->mmap: %pSR\n",
 		       vma->vm_file->f_op->mmap);
-
-	BUG_ON(PANIC_CORRUPTION);
-
 	dump_stack();
 	add_taint(TAINT_BAD_PAGE, LOCKDEP_NOW_UNRELIABLE);
 }
@@ -839,20 +841,20 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		if (!pte_file(pte)) {
 			swp_entry_t entry = pte_to_swp_entry(pte);
 
-			if (swap_duplicate(entry) < 0)
-				return entry.val;
+			if (likely(!non_swap_entry(entry))) {
+				if (swap_duplicate(entry) < 0)
+					return entry.val;
 
-			/* make sure dst_mm is on swapoff's mmlist. */
-			if (unlikely(list_empty(&dst_mm->mmlist))) {
-				spin_lock(&mmlist_lock);
-				if (list_empty(&dst_mm->mmlist))
-					list_add(&dst_mm->mmlist,
-						 &src_mm->mmlist);
-				spin_unlock(&mmlist_lock);
-			}
-			if (likely(!non_swap_entry(entry)))
+				/* make sure dst_mm is on swapoff's mmlist. */
+				if (unlikely(list_empty(&dst_mm->mmlist))) {
+					spin_lock(&mmlist_lock);
+					if (list_empty(&dst_mm->mmlist))
+						list_add(&dst_mm->mmlist,
+							 &src_mm->mmlist);
+					spin_unlock(&mmlist_lock);
+				}
 				rss[MM_SWAPENTS]++;
-			else if (is_migration_entry(entry)) {
+			} else if (is_migration_entry(entry)) {
 				page = migration_entry_to_page(entry);
 
 				if (PageAnon(page))
@@ -1793,19 +1795,6 @@ long __get_user_pages(struct task_struct *tsk, struct mm_struct *mm,
 			goto next_page;
 		}
 
-		if (use_user_accessible_timers()) {
-			if (!vma && in_user_timers_area(mm, start)) {
-				int goto_next_page = 0;
-				int user_timer_ret = get_user_timer_page(vma,
-					mm, start, gup_flags, pages, i,
-					&goto_next_page);
-				if (goto_next_page)
-					goto next_page;
-				else
-					return user_timer_ret;
-			}
-		}
-
 		if (!vma ||
 		    (vma->vm_flags & (VM_IO | VM_PFNMAP)) ||
 		    !(vm_flags & vma->vm_flags))
@@ -1955,10 +1944,15 @@ int fixup_user_fault(struct task_struct *tsk, struct mm_struct *mm,
 		     unsigned long address, unsigned int fault_flags)
 {
 	struct vm_area_struct *vma;
+	vm_flags_t vm_flags;
 	int ret;
 
 	vma = find_extend_vma(mm, address);
 	if (!vma || address < vma->vm_start)
+		return -EFAULT;
+
+	vm_flags = (fault_flags & FAULT_FLAG_WRITE) ? VM_WRITE : VM_READ;
+	if (!(vm_flags & vma->vm_flags))
 		return -EFAULT;
 
 	ret = handle_mm_fault(mm, vma, address, fault_flags);
@@ -3010,6 +3004,14 @@ void unmap_mapping_range(struct address_space *mapping,
 }
 EXPORT_SYMBOL(unmap_mapping_range);
 
+#ifdef CONFIG_ZRAM
+#include <linux/module.h>
+// always try to free swap in zram swap case
+static int keep_to_free_swap = 1;
+module_param_named(keep_to_free_swap,keep_to_free_swap, int, S_IRUGO | S_IWUSR);
+#endif
+
+
 /*
  * We enter with non-exclusive mmap_sem (to exclude vma changes,
  * but allow concurrent faults), and pte mapped but not yet locked.
@@ -3160,7 +3162,12 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	mem_cgroup_commit_charge_swapin(page, ptr);
 
 	swap_free(entry);
+
+#ifdef CONFIG_ZRAM
+	if (keep_to_free_swap || vm_swap_full() || (vma->vm_flags & VM_LOCKED) || PageMlocked(page))
+#else
 	if (vm_swap_full() || (vma->vm_flags & VM_LOCKED) || PageMlocked(page))
+#endif
 		try_to_free_swap(page);
 	unlock_page(page);
 	if (page != swapcache) {
@@ -3777,21 +3784,13 @@ unlock:
 /*
  * By the time we get here, we already hold the mm semaphore
  */
-int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
-		unsigned long address, unsigned int flags)
+static int __handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
+			     unsigned long address, unsigned int flags)
 {
 	pgd_t *pgd;
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
-
-	__set_current_state(TASK_RUNNING);
-
-	count_vm_event(PGFAULT);
-	mem_cgroup_count_vm_event(mm, PGFAULT);
-
-	/* do counter updates before entering really critical section. */
-	check_sync_rss_stat(current);
 
 	if (unlikely(is_vm_hugetlb_page(vma)))
 		return hugetlb_fault(mm, vma, address, flags);
@@ -3871,6 +3870,43 @@ retry:
 	pte = pte_offset_map(pmd, address);
 
 	return handle_pte_fault(mm, vma, address, pte, pmd, flags);
+}
+
+int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
+		    unsigned long address, unsigned int flags)
+{
+	int ret;
+
+	__set_current_state(TASK_RUNNING);
+
+	count_vm_event(PGFAULT);
+	mem_cgroup_count_vm_event(mm, PGFAULT);
+
+	/* do counter updates before entering really critical section. */
+	check_sync_rss_stat(current);
+
+	/*
+	 * Enable the memcg OOM handling for faults triggered in user
+	 * space.  Kernel faults are handled more gracefully.
+	 */
+	if (flags & FAULT_FLAG_USER)
+		mem_cgroup_oom_enable();
+
+	ret = __handle_mm_fault(mm, vma, address, flags);
+
+	if (flags & FAULT_FLAG_USER) {
+		mem_cgroup_oom_disable();
+                /*
+                 * The task may have entered a memcg OOM situation but
+                 * if the allocation error was handled gracefully (no
+                 * VM_FAULT_OOM), there is no need to kill anything.
+                 * Just clean up the OOM state peacefully.
+                 */
+                if (task_in_memcg_oom(current) && !(ret & VM_FAULT_OOM))
+                        mem_cgroup_oom_synchronize(false);
+	}
+
+	return ret;
 }
 
 #ifndef __PAGETABLE_PUD_FOLDED
@@ -4228,7 +4264,7 @@ void print_vma_addr(char *prefix, unsigned long ip)
 	up_read(&mm->mmap_sem);
 }
 
-#if defined(CONFIG_PROVE_LOCKING) || defined(CONFIG_DEBUG_ATOMIC_SLEEP)
+#ifdef CONFIG_PROVE_LOCKING
 void might_fault(void)
 {
 	/*
@@ -4240,17 +4276,13 @@ void might_fault(void)
 	if (segment_eq(get_fs(), KERNEL_DS))
 		return;
 
+	might_sleep();
 	/*
 	 * it would be nicer only to annotate paths which are not under
 	 * pagefault_disable, however that requires a larger audit and
 	 * providing helpers like get_user_atomic.
 	 */
-	if (in_atomic())
-		return;
-
-	__might_sleep(__FILE__, __LINE__, 0);
-
-	if (current->mm)
+	if (!in_atomic() && current->mm)
 		might_lock_read(&current->mm->mmap_sem);
 }
 EXPORT_SYMBOL(might_fault);

@@ -51,6 +51,10 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/printk.h>
 
+#ifdef CONFIG_DEBUG_LL
+extern void printascii(char *);
+#endif
+
 /* printk's without a loglevel use this.. */
 #define DEFAULT_MESSAGE_LOGLEVEL CONFIG_DEFAULT_MESSAGE_LOGLEVEL
 
@@ -208,6 +212,7 @@ struct log {
 	u8 facility;		/* syslog facility */
 	u8 flags:5;		/* internal record flags */
 	u8 level:3;		/* syslog level */
+	int cpu;			/* the print cpu */
 };
 
 /*
@@ -306,7 +311,7 @@ static u32 log_next(u32 idx)
 static void log_store(int facility, int level,
 		      enum log_flags flags, u64 ts_nsec,
 		      const char *dict, u16 dict_len,
-		      const char *text, u16 text_len)
+		      const char *text, u16 text_len, int cpu)
 {
 	struct log *msg;
 	u32 size, pad_len;
@@ -351,6 +356,7 @@ static void log_store(int facility, int level,
 	msg->facility = facility;
 	msg->level = level & 7;
 	msg->flags = flags & 0x1f;
+	msg->cpu = cpu;
 	if (ts_nsec > 0)
 		msg->ts_nsec = ts_nsec;
 	else
@@ -883,6 +889,12 @@ static size_t print_time(u64 ts, char *buf)
 	return sprintf(buf, "[%5lu.%06lu] ",
 		       (unsigned long)ts, rem_nsec / 1000);
 }
+static size_t print_cpu(int cpu, char *buf)
+{
+	if (!buf)
+		return snprintf(NULL, 0, "c%d ", cpu);
+	return sprintf(buf, "c%d ", cpu);
+}
 
 static size_t print_prefix(const struct log *msg, bool syslog, char *buf)
 {
@@ -904,6 +916,7 @@ static size_t print_prefix(const struct log *msg, bool syslog, char *buf)
 	}
 
 	len += print_time(msg->ts_nsec, buf ? buf + len : NULL);
+	len += print_cpu(msg->cpu, buf? buf+len:NULL);
 	return len;
 }
 
@@ -1405,6 +1418,7 @@ static struct cont {
 	u8 facility;			/* log level of first message */
 	enum log_flags flags;		/* prefix, newline flags */
 	bool flushed:1;			/* buffer sealed and committed */
+	int cpu;
 } cont;
 
 static void cont_flush(enum log_flags flags)
@@ -1421,7 +1435,7 @@ static void cont_flush(enum log_flags flags)
 		 * line. LOG_NOCONS suppresses a duplicated output.
 		 */
 		log_store(cont.facility, cont.level, flags | LOG_NOCONS,
-			  cont.ts_nsec, NULL, 0, cont.buf, cont.len);
+			  cont.ts_nsec, NULL, 0, cont.buf, cont.len, cont.cpu);
 		cont.flags = flags;
 		cont.flushed = true;
 	} else {
@@ -1430,7 +1444,7 @@ static void cont_flush(enum log_flags flags)
 		 * just submit it to the store and free the buffer.
 		 */
 		log_store(cont.facility, cont.level, flags, 0,
-			  NULL, 0, cont.buf, cont.len);
+			  NULL, 0, cont.buf, cont.len, cont.cpu);
 		cont.len = 0;
 	}
 }
@@ -1543,7 +1557,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 		printed_len += strlen(recursion_msg);
 		/* emit KERN_CRIT message */
 		log_store(0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
-			  NULL, 0, recursion_msg, printed_len);
+			  NULL, 0, recursion_msg, printed_len, logbuf_cpu);
 	}
 
 	/*
@@ -1551,6 +1565,10 @@ asmlinkage int vprintk_emit(int facility, int level,
 	 * prefix which might be passed-in as a parameter.
 	 */
 	text_len = vscnprintf(text, sizeof(textbuf), fmt, args);
+
+#ifdef CONFIG_DEBUG_LL
+	printascii(text);
+#endif
 
 	/* mark and strip a trailing newline */
 	if (text_len && text[text_len-1] == '\n') {
@@ -1595,7 +1613,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 		/* buffer line if possible, otherwise store it right away */
 		if (!cont_add(facility, level, text, text_len))
 			log_store(facility, level, lflags | LOG_CONT, 0,
-				  dict, dictlen, text, text_len);
+				  dict, dictlen, text, text_len, logbuf_cpu);
 	} else {
 		bool stored = false;
 
@@ -1613,7 +1631,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 
 		if (!stored)
 			log_store(facility, level, lflags, 0,
-				  dict, dictlen, text, text_len);
+				  dict, dictlen, text, text_len, logbuf_cpu);
 	}
 	printed_len += text_len;
 
@@ -1910,14 +1928,6 @@ void resume_console(void)
 	console_unlock();
 }
 
-static void __cpuinit console_flush(struct work_struct *work)
-{
-	console_lock();
-	console_unlock();
-}
-
-static __cpuinitdata DECLARE_WORK(console_cpu_notify_work, console_flush);
-
 /**
  * console_cpu_notify - print deferred console messages after CPU hotplug
  * @self: notifier struct
@@ -1928,27 +1938,17 @@ static __cpuinitdata DECLARE_WORK(console_cpu_notify_work, console_flush);
  * will be spooled but will not show up on the console.  This function is
  * called when a new CPU comes online (or fails to come up), and ensures
  * that any such output gets printed.
- *
- * Special handling must be done for cases invoked from an atomic context,
- * as we can't be taking the console semaphore here.
  */
 static int __cpuinit console_cpu_notify(struct notifier_block *self,
 	unsigned long action, void *hcpu)
 {
 	switch (action) {
+	case CPU_ONLINE:
 	case CPU_DEAD:
 	case CPU_DOWN_FAILED:
 	case CPU_UP_CANCELED:
 		console_lock();
 		console_unlock();
-		break;
-	case CPU_ONLINE:
-	case CPU_DYING:
-		/* invoked with preemption disabled, so defer */
-		if (!console_trylock())
-			schedule_work(&console_cpu_notify_work);
-		else
-			console_unlock();
 	}
 	return NOTIFY_OK;
 }
@@ -2503,7 +2503,7 @@ void wake_up_klogd(void)
 	preempt_enable();
 }
 
-int printk_sched(const char *fmt, ...)
+int printk_deferred(const char *fmt, ...)
 {
 	unsigned long flags;
 	va_list args;

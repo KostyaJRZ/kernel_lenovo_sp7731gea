@@ -18,6 +18,31 @@ config MFD_CS5535
 	  This is the core driver for CS5535/CS5536 MFD functions.  This is
           necessary for using the board's GPIO and MFGPT functionality.
 
+config MFD_SM5504
+	tristate "SiliconMitus SM5504 MUIC"
+	depends on I2C
+	select MFD_CORE
+	default n
+	help
+	  Support SM5504 MUIC
+
+config MFD_SM5701
+	tristate "Support for SiliconMitus SM5701 I/F PMIC"
+	depends on I2C
+	select MFD_CORE
+	default n
+	help
+	  If you say yes to this option, support will be included for the
+	  SM5701 I/F PMIC chip.
+
+config MFD_RT8973
+	tristate "Richtek RT8973 MUIC"
+	depends on I2C
+	select MFD_CORE
+	default n
+	help
+	  Support RT8973 MUIC
+
 config MFD_AS3711
 	bool "AMS AS3711"
 	select MFD_CORE
@@ -26,6 +51,30 @@ config MFD_AS3711
 	depends on I2C=y && GENERIC_HARDIRQS
 	help
 	  Support for the AS3711 PMIC from AMS
+
+config MFD_RT5033
+	tristate "Support for Richtek RT5033 I/F PMIC"
+	depends on I2C
+	select MFD_CORE
+	default n
+	help
+	  If you say yes to this option, support will be included for the
+	  RT5033 I/F PMIC chip.
+
+config MFD_RT5033_EN_MRSTB
+	bool "Enable MRSTB function"
+	depends on MFD_RT5033
+	default y
+	help
+	  If you enable this function, you need to connect MRSTB to AP's GPIO,
+	  and then assign GPIO number in DTSI or board file
+
+config MFD_RT5033_USE_DT
+	bool "Use device tree"
+	depends on MFD_RT5033 && OF
+	default n
+	help
+	  Check this to support device tree.
 
 config PMIC_ADP5520
 	bool "Analog Devices ADP5520/01 MFD PMIC Core Support"
@@ -1116,48 +1165,6 @@ config MFD_WM8994
 	  core support for the WM8994, in order to use the actual
 	  functionaltiy of the device other drivers must be enabled.
 
-config WCD9304_CODEC
-        tristate "WCD9304 Codec"
-        select SLIMBUS
-        select MFD_CORE
-        default n
-        help
-          Enables the WCD9304 core driver. The core driver provides
-          read/write capability to registers which are part of the
-          WCD9304 core and gives the ability to use the WCD9304 codec.
-
-config WCD9310_CODEC
-        tristate "WCD9310 Codec"
-        select SLIMBUS
-        select MFD_CORE
-        default n
-        help
-          Enables the WCD9310 core driver. The core driver provides
-          read/write capability to registers which are part of the
-          WCD9310 core and gives the ability to use the WCD9310 codec.
-
-config WCD9320_CODEC
-	tristate "WCD9320 Codec"
-	select SLIMBUS
-	select MFD_CORE
-	help
-	  Enables the WCD9xxx codec core driver. The core driver provides
-	  read/write capability to registers which are part of the
-	  WCD9320 core and gives the ability to use the WCD9320 codec.
-	  The WCD9320 codec support either I2C/I2S or Slimbus for
-	  control and data exchnage with master processor.
-
-config WCD9306_CODEC
-	tristate "WCD9306 Codec"
-	select SLIMBUS
-	select MFD_CORE
-	help
-	  Enables the WCD9xxx codec core driver. The core driver provides
-	  read/write capability to registers which are part of the
-	  WCD9306 core and gives the ability to use the WCD9306 codec.
-	  The WCD9306 codec supports either I2C/I2S or Slimbus for
-	  control and data exchnage with master processor.
-
 endmenu
 endif
 
@@ -1186,7 +1193,15 @@ config MCP_UCB1200_TS
 endmenu
 
 config VEXPRESS_CONFIG
-	bool
+	bool "ARM Versatile Express platform infrastructure"
+	depends on ARM || ARM64
 	help
 	  Platform configuration infrastructure for the ARM Ltd.
 	  Versatile Express.
+
+config VEXPRESS_SPC
+	bool "Versatile Express SPC driver support"
+	depends on ARM
+	depends on VEXPRESS_CONFIG
+	help
+	  Serial Power Controller driver for ARM Ltd. test chips.

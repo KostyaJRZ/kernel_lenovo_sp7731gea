@@ -232,6 +232,23 @@ static inline void *phys_to_virt(phys_addr_t x)
 #define __va(x)			((void *)__phys_to_virt((unsigned long)(x)))
 #define pfn_to_kaddr(pfn)	__va((pfn) << PAGE_SHIFT)
 
+extern phys_addr_t (*arch_virt_to_idmap) (unsigned long x);
+
+/*
+ * These are for systems that have a hardware interconnect supported alias of
+ * physical memory for idmap purposes.  Most cases should leave these
+ * untouched.
+ */
+static inline phys_addr_t __virt_to_idmap(unsigned long x)
+{
+	if (arch_virt_to_idmap)
+		return arch_virt_to_idmap(x);
+	else
+		return __virt_to_phys(x);
+}
+
+#define virt_to_idmap(x)	__virt_to_idmap((unsigned long)(x))
+
 /*
  * Virtual <-> DMA view memory address translations
  * Again, these are *only* valid on the kernel direct mapped RAM
@@ -277,12 +294,6 @@ static inline __deprecated void *bus_to_virt(unsigned long x)
 #define virt_to_page(kaddr)	pfn_to_page(__pa(kaddr) >> PAGE_SHIFT)
 #define virt_addr_valid(kaddr)	((unsigned long)(kaddr) >= PAGE_OFFSET && (unsigned long)(kaddr) < (unsigned long)high_memory)
 
-/*
- * Set if the architecture speculatively fetches data into cache.
- */
-#ifndef arch_has_speculative_dfetch
-#define arch_has_speculative_dfetch()	0
-#endif
 #endif
 
 #include <asm-generic/memory_model.h>
